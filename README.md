@@ -210,3 +210,4 @@ For detailed instructions and examples, visit the [official repository](https://
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
+```

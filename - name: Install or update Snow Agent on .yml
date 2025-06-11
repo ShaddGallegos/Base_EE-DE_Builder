@@ -1,0 +1,63 @@
+- name: Install or update Snow Agent on target host
+  hosts: "{{ target_host }}"
+  become: yes
+  vars:
+    target_host: "{{ target_host }}"
+    snow_repo_server: "dceplsatellite02.owcadmz.com"
+    snow_agent_path: "/tmp/OWCACORE-LinuxServer-snowagent-snowagent-7.3.0-x86.rpm" 
+    local_temp_path: "{{ local_temp_path }}"
+    rpm_filename: "OWCACORE-LinuxServer-snowagent-snowagent-7.3.0-x86.rpm"
+
+  tasks:
+    - name: Copy latest Snow Agent from repo server to Ansible control node
+      fetch:
+        src: "{{ snow_agent_path }}"
+        dest: "{{ local_temp_path }}"
+        flat: yes
+        validate_checksum: no
+      delegate_to: "{{ snow_repo_server }}"
+
+    - name: Copy Snow Agent from control node to target host
+      copy:
+        src: "{{ local_temp_path }}"
+        dest: "/tmp/{{ rpm_filename }}"
+ 
+    - name: Extract version from new RPM package
+      shell: "rpm -qp --queryformat '%{VERSION}' /tmp/{{ rpm_filename }}"
+      register: new_version
+      changed_when: false
+
+    - name: Get installed Snow Agent version (if any)
+      shell: "rpm -q --queryformat '%{VERSION}' snowagent || echo 'none'"
+      register: installed_version
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Debug versions for comparison
+      debug:
+        msg: 
+          - "New version: {{ new_version.stdout }}"
+          - "Installed version: {{ installed_version.stdout }}"
+
+    - name: Compare versions and decide
+      debug:
+        msg: >-
+          {% if installed_version.stdout == 'none' %}
+          No Snow Agent currently installed. Will install version {{ new_version.stdout }}.
+          {% elif installed_version.stdout == new_version.stdout %}
+          Latest version of Snow Agent ({{ new_version.stdout }}) is already installed.
+          {% else %}
+          Updating Snow Agent from {{ installed_version.stdout }} to {{ new_version.stdout }}.
+          {% endif %}
+
+    - name: Remove Old Snow Agent if installed or version less than New version
+      yum:
+        name: snowagent
+        state: absent
+      when: installed_version.stdout != 'none' or installed_version.stdout != new_version.stdout
+
+    - name: Install latest Snow Agent
+      yum:
+        name: "/tmp/{{ rpm_filename }}"
+        state: present
+      when: installed_version.stdout == 'none' or (installed_version.stdout | version(new_version.stdout, '<'))
