@@ -1,0 +1,49 @@
+# Ignore Python cache and backup files
+**/__pycache__/
+**/*.py[cod]
+**/*.orig
+**/*.bak
+**/*.swp
+**/*.tmp
+**/*.latest.*
+**/*.working_advanced
+**/*.everything_but_wizard
+
+# Ignore virtual environment
+backend/venv/
+
+# Ignore frontend/node artifacts if they exist
+frontend/node_modules/
+frontend/build/
+frontend/dist/
+*.log
+*.lock
+
+# Ignore macOS system files
+.DS_Store
+
+# Ignore artifact folders if only used for packaging
+artifact/__pycache__/
+
+# IDE/editor configs
+.vscode/
+.idea/
+
+# Ignore compiled binary links (e.g., pip-installed symlinks in venv)
+backend/venv/bin/
+!backend/venv/bin/activate*
+!backend/venv/bin/pip*
+!backend/venv/bin/python*
+
+# Ignore Python build artifacts
+*.egg-info/
+.eggs/
+*.manifest
+*.spec
+
+# Ignore test output, coverage reports
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+

@@ -1,8 +1,8 @@
-# Base_EE-DE_Builder
+# EE-DE Builder - Ansible Environment Builder Web Application
 
-## Project Overview
-
-Base_EE-DE_Builder provides a toolkit and reference implementation for creating custom Ansible Execution Environments (EE) and Development Environments (DE) specifically designed for use with Ansible Automation Platform (AAP). This project streamlines the workflow of building, publishing, and utilizing containerized environments in your AAP infrastructure.
+A full-stack web application for building and managing Ansible Execution
+Environments (EE) and Decision Environments (DE) with an intuitive user
+interface.
 
 ## Purpose & Workflow
 
@@ -20,23 +20,6 @@ This project serves as a guide and reference implementation for:
 - **Documentation**: Guidance on integrating with AAP infrastructure
 - **Examples**: Working configurations for common use cases
 
-## Pre-defined Environments
-
-The project includes ready-to-build definitions for:
-
-- **RHEL 8 Environments**:
-  - `rhel-8-ee-minimal`: Minimal execution environment
-  - `rhel-8-ee-supported`: Full-featured execution environment
-  - `rhel-8-de-minimal`: Minimal development environment
-  - `rhel-8-de-supported`: Full-featured development environment
-  - `rhel-8-devtools`: Enhanced development environment with Chrome browser
-
-- **RHEL 9 Environments**:
-  - `rhel-9-ee-minimal`: Minimal execution environment
-  - `rhel-9-ee-supported`: Full-featured execution environment
-  - `rhel-9-de-minimal`: Minimal development environment
-  - `rhel-9-de-supported`: Full-featured development environment
-
 ## Environment Definition Templates
 
 The project provides two approaches to defining environments:
@@ -48,12 +31,94 @@ The project provides two approaches to defining environments:
 
 ### 2. Multi-File Definition (`base_environment_definition_4-file`)
 - Configuration split across multiple specialized files:
+  - `execution-environment.yml`: Main configuration
+  - `requirements.txt`: Python dependencies
+  - `bindep.txt`: System dependencies  
+  - `requirements.yml`: Ansible Collections
+- Better for complex environments
+- More maintainable for larger teams
+
+## Specialized Environment References
+
+Additional reference implementations include:
+- RHEL 8-based environments
+- Minimal configurations
+- Development tool-enhanced environments
+
+## Getting Started
+
+1. Clone this repository:
+   ```bash
+   git clone https://github.com/ShaddGallegos/Base_EE-DE_Builder.git
+   cd Base_EE-DE_Builder
+
+# Set up everything and start the application
+make setup
+make dev
+```
+
+This will:
+1. Create a Python virtual environment
+2. Install all dependencies (backend & frontend)
+3. Start both backend and frontend servers
+4. Open the application in your browser
+
+### Manual Setup
+
+<details>
+<summary>Click to expand manual setup instructions</summary>
+
+#### Backend Setup
+```bash
+# Create virtual environment
+python3 -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Start backend server
+cd backend
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+#### Frontend Setup
+```bash
+# Install dependencies
+cd frontend
+npm install
+
+# Start development server
+npm start
+```
+
+</details>
+
+## 🖥️ Usage
+
+1. **Access the Application**: Open http://localhost:3000
+2. **Dashboard**: View build status and environment overview
+3. **Create Environment**: Use the wizard to define new EE/DE containers
+4. **Monitor Builds**: Real-time build progress and logs
+5. **Manage Environments**: Deploy to Automation Hub and Controller
+
+## Environment Definition Templates
+
+### 1. Single File Definition (`base_environment_definition_1-file`)
+- Simple configuration in execution-environment.yml only
+- Best for basic environments with minimal dependencies
+- Quick setup and testing
+
+### 2. Multi-File Definition (`base_environment_definition_4-file`)
+- Configuration split across multiple specialized files:
   - execution-environment.yml: Main configuration
   - requirements.txt: Python dependencies
   - `bindep.txt`: System dependencies  
   - requirements.yml: Ansible Collections
 - Better for complex environments
 - More maintainable for larger teams
+
+## 🔧 Available Make Commands
 
 ## Directory Structure & Naming Convention
 
@@ -88,9 +153,44 @@ environments/
             └── supported/
 ```
 
-## Getting Started
+```bash
+make setup          # Complete project setup
+make dev             # Start development servers
+make backend         # Start only backend server
+make frontend        # Start only frontend server
+make install-backend # Install Python dependencies
+make install-frontend # Install Node.js dependencies
+make clean           # Clean build artifacts
+make test            # Run tests
+make build           # Build for production
+make help            # Show available commands
+```
 
-### Prerequisites
+## ⚙️ Configuration
+
+### Backend Configuration
+
+Environment variables (create `.env` in project root):
+
+```bash
+# Development settings
+DEBUG=true
+LOG_LEVEL=info
+
+# Container settings
+CONTAINER_RUNTIME=podman  # or docker
+REGISTRY_URL=your-registry.example.com
+REGISTRY_USERNAME=your-username
+REGISTRY_PASSWORD=your-password
+
+# Build settings
+BUILD_TIMEOUT=3600
+MAX_CONCURRENT_BUILDS=3
+```
+
+### Building Environments with Ansible
+
+#### Prerequisites
 
 - Ansible 2.9 or newer
 - ansible-builder package
@@ -100,7 +200,7 @@ environments/
   podman login registry.redhat.io
   ```
 
-### Quick Start
+#### Quick Start with Ansible
 
 1. Clone this repository:
    ```bash
@@ -164,14 +264,50 @@ To build only specific environments (e.g., just RHEL 9 EE Minimal):
        - RUN rpm -i /tmp/custom.rpm
    ```
 
-## Use with Ansible Automation Platform
+### Environment Variables
 
-This project is specifically designed to work with the Ansible Automation Platform ecosystem:
+```bash
+# Server Configuration
+DEBUG=true
+HOST=0.0.0.0
+PORT=8000
+ENVIRONMENT=development
 
-- **Automation Hub Integration**: Push custom environments to your private Automation Hub
-- **Controller Compatibility**: Environments are built to be fully compatible with AAP Controller
-- **Execution Node Ready**: Optimized for deployment on AAP execution nodes
-- **Automation Mesh Support**: Works with distributed execution via Automation Mesh
+# Container Runtime
+CONTAINER_RUNTIME=podman  # or 'docker'
+
+# Build Settings
+BUILD_TIMEOUT_MINUTES=30
+MAX_CONCURRENT_BUILDS=3
+BUILD_CLEANUP_HOURS=1
+
+# Paths (relative to backend/)
+ENVIRONMENTS_DIR=../environments
+PLAYBOOK_PATH=../build_environments.yml
+```
+
+### Frontend Configuration
+
+The frontend automatically proxies API requests to `http://localhost:8000` during development.
+
+## 🔗 API Documentation
+
+When the backend is running, access the interactive API documentation:
+- **Swagger UI**: http://localhost:8000/docs
+- **ReDoc**: http://localhost:8000/redoc
+
+## 📁 Environment Definitions
+
+Place your Ansible Builder environment definitions in the `environments/` directory:
+
+```
+environments/
+├── my-custom-ee/
+│   ├── execution-environment.yml
+│   ├── requirements.txt
+│   ├── requirements.yml
+│   └── bindep.txt
+```
 
 ## Examples
 
@@ -203,11 +339,100 @@ collections:
   - name: vmware.vmware_rest
 ```
 
-## Learn More
+## 📝 Environment Configuration Examples
 
-For detailed instructions and examples, visit the [official repository](https://github.com/ShaddGallegos/Base_EE-DE_Builder) and review the environment definition examples in the environments directory.
+### Complete Environment Definition
 
-## License
+```yaml
+# environments/my-custom-ee/execution-environment.yml
+version: 3
+images:
+  base_image:
+    name: registry.redhat.io/ansible-automation-platform-25/ee-minimal-rhel9:latest
+dependencies:
+  python: requirements.txt
+  system: bindep.txt
+  galaxy: requirements.yml
+additional_build_steps:
+  prepend_base:
+    - RUN whoami
+  append_final:
+    - RUN echo "Build complete"
+```
+
+## 🐳 Container Building
+
+The application supports both Podman and Docker for container building:
+
+- **Podman** (default): Rootless container building
+- **Docker**: Traditional container building (requires Docker daemon)
+
+Set your preference in the configuration or environment variables.
+
+## 🔒 Security
+
+- **CORS**: Configured for local development
+- **Input Validation**: Pydantic models ensure data integrity
+- **Container Security**: Follows Ansible Builder security practices
+
+## 🧪 Development
+
+### Project Structure Guidelines
+
+- **Backend**: Follow FastAPI best practices with dependency injection
+- **Frontend**: Use TypeScript and functional components with hooks
+- **API**: RESTful design with proper HTTP status codes
+- **Error Handling**: Comprehensive error handling on both ends
+
+### Adding New Features
+
+1. **Backend**: Add routes in `backend/app/routers/`
+2. **Frontend**: Add components in `frontend/src/components/`
+3. **Models**: Define data models in `backend/app/models/`
+4. **Services**: Business logic in `backend/app/services/`
+
+## 🔍 Troubleshooting
+
+### Common Issues
+
+**Port Already in Use**
+```bash
+# Kill processes on ports 3000 and 8000
+make clean
+```
+
+**Virtual Environment Issues**
+```bash
+# Remove and recreate virtual environment
+rm -rf venv
+make setup
+```
+
+**Container Runtime Issues**
+```bash
+# Check Podman/Docker installation
+podman --version
+# or
+docker --version
+
+# Ensure service is running
+systemctl --user start podman
+```
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature/amazing-feature`
+3. Commit changes: `git commit -m 'Add amazing feature'`
+4. Push to branch: `git push origin feature/amazing-feature`
+5. Open a Pull Request
+
+## 📝 License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
-```
+
+## 🆘 Support
+
+- **Issues**: Report bugs and request features via GitHub Issues
+- **Documentation**: Check the `/docs` directory for detailed guides
+- **API Reference**: Use the interactive docs at `/docs` when running
