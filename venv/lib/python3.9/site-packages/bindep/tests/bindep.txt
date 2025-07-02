@@ -1,0 +1,16 @@
+# A few things to just test installation and some
+# matching
+
+python3-all-dev [platform:dpkg]
+python3-all [platform:dpkg]
+python-devel [platform:rpm !platform:centos-8]
+python3-devel [platform:rpm]
+
+sqlite [platform:redhat]
+sqlite-devel [platform:redhat]
+sqlite3-devel [platform:suse]
+sqlite3 [platform:dpkg]
+dev-db/sqlite [platform:gentoo]
+
+unzip
+zip

@@ -1,0 +1,2 @@
+[console_scripts]
+ansible-builder = ansible_builder.cli:run
