@@ -1,0 +1,18 @@
+# Core FastAPI Stack
+fastapi==0.108.0
+uvicorn[standard]==0.25.0
+pydantic==2.8.0
+python-multipart==0.0.9
+
+# File & Data Handling
+PyYAML==6.0.1
+aiofiles==23.2.1
+requests==2.31.0
+
+# CRITICAL: Ansible & Container Building 
+ansible-builder>=3.0.0
+ansible-core>=2.15,<2.17
+ansible-runner>=2.0.0
+
+# Configuration Management
+pydantic-settings>=2.0.0

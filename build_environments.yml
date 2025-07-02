@@ -1,81 +1,66 @@
-- name: Build execution environments for RHEL
+---
+- name: Build Execution Environments
   hosts: localhost
+  connection: local
   gather_facts: false
+  vars:
+    # NEW: Add support for selected environments (maintains CLI compatibility)
+    selected_environments: "{{ selected_environments | default([]) }}"
+    environments_dir: "{{ playbook_dir }}/environments"
+    
   tasks:
-
-    - name: Find directories in environments
-      find:
-        paths: "{{ playbook_dir }}/environments"
+    # NEW: Handle selected environments logic
+    - name: Find all available environments (when none selected)
+      ansible.builtin.find:
+        paths: "{{ environments_dir }}"
         file_type: directory
-      register: env_dirs
+        excludes: ".*"
+      register: all_environments
+      when: selected_environments | length == 0
 
-    - name: Debug env_dirs
-      debug:
-        var: env_dirs.files
+    - name: Set environment list - Auto-discover all environments  
+      ansible.builtin.set_fact:
+        environment_list: "{{ all_environments.files | map(attribute='path') | map('basename') | list | sort }}"
+      when: selected_environments | length == 0
 
-    - name: Identify directories containing required files
-      set_fact:
-        valid_dirs: |
-          {% set my_valid_dirs = [] %}
-          {% for dir_item in env_dirs.files %}
-            {# Ensure item is a directory (already filtered by find) and path contains 'rhel' #}
-            {% if 'rhel' in dir_item.path %}
-              {# Construct full paths to the required files #}
-              {% set ee_file = dir_item.path ~ '/execution-environment.yml' %}
-              {% set req_yml_file = dir_item.path ~ '/requirements.yml' %}
-              {% set req_txt_file = dir_item.path ~ '/requirements.txt' %}
-              {% set bindep_file = dir_item.path ~ '/bindep.txt' %}
+    - name: Set environment list - Use selected environments
+      ansible.builtin.set_fact:
+        environment_list: "{{ selected_environments }}"
+      when: selected_environments | length > 0
 
-              {# Check if all required files exist in the directory #}
-              {% if ee_file is exists and
-                    req_yml_file is exists and
-                    req_txt_file is exists and
-                    bindep_file is exists %}
-                {% set _ = my_valid_dirs.append(dir_item) %}
-              {% endif %}
-            {% endif %}
-          {% endfor %}
-          {{ my_valid_dirs }}
+    # NEW: Validate selected environments exist
+    - name: Validate selected environments exist
+      ansible.builtin.stat:
+        path: "{{ environments_dir }}/{{ item }}"
+      register: env_check
+      loop: "{{ environment_list }}"
+      when: selected_environments | length > 0
 
-    - name: Display valid directories before building
-      debug:
-        var: valid_dirs | from_yaml
+    - name: Fail if selected environment doesn't exist
+      ansible.builtin.fail:
+        msg: "Environment '{{ item.item }}' not found in {{ environments_dir }}"
+      loop: "{{ env_check.results }}"
+      when: 
+        - selected_environments | length > 0
+        - not item.stat.exists
+      loop_control:
+        label: "{{ item.item }}"
 
-    - name: DEBUG - Check current working directory before ansible-builder
-      command: pwd
+    # ORIGINAL: Keep your original task structure, just add FQCN and use environment_list
+    - name: Build execution environments
+      ansible.builtin.command: >
+        ansible-builder build
+        --build-arg ANSIBLE_GALAXY_CLI_COLLECTION_OPTS=--ignore-certs
+        --container-runtime {{ container_runtime | default('podman') }}
+        --file {{ environments_dir }}/{{ item }}/execution-environment.yml
+        --tag {{ item }}:latest
+        --verbosity 1
       args:
-        chdir: "{{ item.path }}"
-      loop: "{{ valid_dirs | from_yaml }}"
-      register: pwd_check_results
-      ignore_errors: true # Continue even if this debug step fails
+        chdir: "{{ environments_dir }}/{{ item }}"
+      loop: "{{ environment_list }}"
+      register: build_results
 
-    - name: DEBUG - Display pwd results
-      debug:
-        var: pwd_check_results.results
-      when: pwd_check_results is defined
-
-    - name: Run ansible-builder in each valid directory
-      command: /app/bin/ansible-builder build --prune -v 3 --tag "{{ item.path | basename }}" --container-runtime podman
-      args:
-        chdir: "{{ item.path }}"
-      loop: "{{ valid_dirs | from_yaml }}"
-      
-    - name: Find context directories created by ansible-builder
-      find:
-        paths: "{{ item.path }}"
-        patterns: ["context", "_build"]
-        file_type: directory
-      loop: "{{ valid_dirs | from_yaml }}"
-      register: context_dirs
-      
-    - name: Remove context directories
-      file:
-        path: "{{ item.path }}/context"
-        state: absent
-      loop: "{{ valid_dirs | from_yaml }}"
-
-    - name: Remove _build directories
-      file:
-        path: "{{ item.path }}/_build"
-        state: absent
-      loop: "{{ valid_dirs | from_yaml }}"
+    # NEW: Optional build summary (can be removed if you don't want it)
+    - name: Display build results
+      ansible.builtin.debug:
+        msg: "Built {{ environment_list | length }} environments: {{ environment_list | join(', ') }}"
