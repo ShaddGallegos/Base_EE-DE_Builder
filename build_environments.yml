@@ -2,13 +2,85 @@
 - name: Build Execution Environments
   hosts: localhost
   connection: local
-  gather_facts: false
+  gather_facts: true
   vars:
-    # NEW: Add support for selected environments (maintains CLI compatibility)
-    selected_environments: "{{ selected_environments | default([]) }}"
+    # Directory containing execution environments
     environments_dir: "{{ playbook_dir }}/environments"
     
   tasks:
+    # NEW: Ensure container runtimes are installed
+    - name: Install podman
+      ansible.builtin.dnf:
+        name:
+          - podman
+          - gnome-terminal
+          - tmux
+          - terminator
+          - podman-docker
+          - podman-compose
+        state: present
+      become: true
+
+    - name: Try to install docker (ignore if not available)
+      ansible.builtin.dnf:
+        name:
+          - docker
+          - gnome-terminal
+          - tmux
+          - terminator
+          - podman-docker
+          - podman-compose
+        state: present
+      become: true
+      ignore_errors: true
+
+    - name: Check if docker service exists
+      ansible.builtin.command: systemctl list-unit-files docker.service
+      register: docker_service_check
+      ignore_errors: true
+      changed_when: false
+
+    - name: Enable and start docker service (if available)
+      ansible.builtin.systemd:
+        name: docker
+        enabled: true
+        state: started
+      become: true
+      when: docker_service_check.rc == 0
+
+    - name: Add current user to docker group (if docker is available)
+      ansible.builtin.user:
+        name: "{{ ansible_user_id }}"
+        groups: docker
+        append: true
+      become: true
+      when: docker_service_check.rc == 0
+
+    # Prompt for Red Hat CDN credentials and login to registry
+    - name: Prompt for Red Hat CDN username
+      ansible.builtin.pause:
+        prompt: "Enter your Red Hat Customer Portal username"
+        echo: true
+      register: cdn_username
+
+    - name: Prompt for Red Hat CDN password
+      ansible.builtin.pause:
+        prompt: "Enter your Red Hat Customer Portal password"
+        echo: false
+      register: cdn_password
+
+    - name: Login to Red Hat registry with podman
+      ansible.builtin.command: >
+        podman login registry.redhat.io 
+        --username {{ cdn_username.user_input }} 
+        --password {{ cdn_password.user_input }}
+      register: podman_login_result
+      ignore_errors: true
+
+    - name: Display login result
+      ansible.builtin.debug:
+        msg: "{{ 'Successfully logged into Red Hat registry' if podman_login_result.rc == 0 else 'Failed to login to Red Hat registry: ' + podman_login_result.stderr }}"
+
     # NEW: Handle selected environments logic
     - name: Find all available environments (when none selected)
       ansible.builtin.find:
@@ -16,17 +88,30 @@
         file_type: directory
         excludes: ".*"
       register: all_environments
-      when: selected_environments | length == 0
+      when: selected_environments is not defined or selected_environments | length == 0
 
     - name: Set environment list - Auto-discover all environments  
       ansible.builtin.set_fact:
-        environment_list: "{{ all_environments.files | map(attribute='path') | map('basename') | list | sort }}"
-      when: selected_environments | length == 0
+        environment_list: "{{ all_environments.files | map(attribute='path') | map('basename') | reject('match', '^base_environment_definition_.*') | list | sort }}"
+      when: selected_environments is not defined or selected_environments | length == 0
 
     - name: Set environment list - Use selected environments
       ansible.builtin.set_fact:
         environment_list: "{{ selected_environments }}"
-      when: selected_environments | length > 0
+      when: selected_environments is defined and selected_environments | length > 0
+
+    - name: Filter out documentation environments from selected list
+      ansible.builtin.set_fact:
+        environment_list: "{{ environment_list | reject('match', '^base_environment_definition_.*') | list }}"
+      when: selected_environments is defined and selected_environments | length > 0
+
+    - name: Warn about skipped documentation environments
+      ansible.builtin.debug:
+        msg: "SKIPPING documentation environment: {{ item }} (base_environment_definition files are for documentation only)"
+      loop: "{{ selected_environments | default([]) }}"
+      when: 
+        - selected_environments is defined
+        - item is match('^base_environment_definition_.*')
 
     # NEW: Validate selected environments exist
     - name: Validate selected environments exist
@@ -34,33 +119,133 @@
         path: "{{ environments_dir }}/{{ item }}"
       register: env_check
       loop: "{{ environment_list }}"
-      when: selected_environments | length > 0
+      when: selected_environments is defined and selected_environments | length > 0
 
     - name: Fail if selected environment doesn't exist
       ansible.builtin.fail:
         msg: "Environment '{{ item.item }}' not found in {{ environments_dir }}"
       loop: "{{ env_check.results }}"
       when: 
-        - selected_environments | length > 0
+        - selected_environments is defined and selected_environments | length > 0
         - not item.stat.exists
       loop_control:
         label: "{{ item.item }}"
 
-    # ORIGINAL: Keep your original task structure, just add FQCN and use environment_list
-    - name: Build execution environments
+    # Launch monitoring terminal with tmux split panes
+    - name: Create podman monitor script
+      ansible.builtin.copy:
+        dest: /tmp/monitor_script.sh
+        mode: '0755'
+        content: |
+          #!/bin/bash
+          clear
+          cat "{{ playbook_dir }}/Images/asciiable.txt"
+          echo ""
+          echo "=== Podman Images Monitor ==="
+          echo ""
+          sudo watch -n 0.05 podman images
+
+    - name: Launch tmux session with podman monitoring split
+      ansible.builtin.shell: |
+        tmux new-session -d -s podman_monitor \
+          "bash /tmp/monitor_script.sh"
+        tmux split-window -h -t podman_monitor \
+          "bash"
+        tmux select-layout -t podman_monitor even-horizontal
+        tmux attach-session -t podman_monitor
+      async: 300
+      poll: 0
+      register: tmux_launch
+      ignore_errors: true
+
+    # NEW: Try building with podman first, then fallback to docker
+    - name: Build execution environments with podman
       ansible.builtin.command: >
-        ansible-builder build
+        /usr/local/bin/ansible-builder build
         --build-arg ANSIBLE_GALAXY_CLI_COLLECTION_OPTS=--ignore-certs
-        --container-runtime {{ container_runtime | default('podman') }}
+        --container-runtime podman
         --file {{ environments_dir }}/{{ item }}/execution-environment.yml
-        --tag {{ item }}:latest
+        --prune
+        --tag {{ item }}:{{ ansible_date_time.date }}-{{ ansible_date_time.hour }}{{ ansible_date_time.minute }}{{ ansible_date_time.second }}
         --verbosity 1
       args:
         chdir: "{{ environments_dir }}/{{ item }}"
       loop: "{{ environment_list }}"
-      register: build_results
+      register: build_results_podman
+      ignore_errors: true
 
-    # NEW: Optional build summary (can be removed if you don't want it)
+    # Fallback: Build with docker if podman failed (and docker is available)
+    - name: Build execution environments with docker (fallback)
+      ansible.builtin.command: >
+        /usr/local/bin/ansible-builder build
+        --build-arg ANSIBLE_GALAXY_CLI_COLLECTION_OPTS=--ignore-certs
+        --container-runtime docker
+        --file {{ environments_dir }}/{{ item }}/execution-environment.yml
+        --tag {{ item }}:{{ ansible_date_time.date }}-{{ ansible_date_time.hour }}{{ ansible_date_time.minute }}{{ ansible_date_time.second }}
+        --verbosity 1
+      args:
+        chdir: "{{ environments_dir }}/{{ item }}"
+      loop: "{{ environment_list }}"
+      register: build_results_docker
+      when: 
+        - build_results_podman.results[ansible_loop.index0].rc != 0
+        - docker_service_check.rc == 0
+      ignore_errors: true
+      loop_control:
+        extended: true
+
+    # Clean up dangling images after builds
+    - name: Clean up dangling podman images
+      ansible.builtin.shell: |
+        dangling_images=$(podman images --filter dangling=true --quiet)
+        if [ -n "$dangling_images" ]; then
+          echo "Found dangling images, attempting to remove..."
+          # Try to remove images, but continue even if some are in use
+          for image in $dangling_images; do
+            podman image rm $image 2>/dev/null && echo "Deleted: $image" || echo "Skipped: $image (in use)"
+          done
+        else
+          echo "No dangling images to remove"
+        fi
+      ignore_errors: true
+      register: cleanup_result
+
+    - name: Display cleanup results
+      ansible.builtin.debug:
+        msg: "{{ cleanup_result.stdout_lines | default(['No cleanup output']) }}"
+
+    # Clean up context folders created by ansible-builder
+    - name: Remove context folders from environment directories
+      ansible.builtin.file:
+        path: "{{ environments_dir }}/{{ item }}/context"
+        state: absent
+      loop: "{{ environment_list }}"
+      ignore_errors: true
+
+    - name: Display context cleanup message
+      ansible.builtin.debug:
+        msg: "Cleaned up context folders from all environment directories"
+
+    # Set final build results for summary
+    - name: Set final build results
+      ansible.builtin.set_fact:
+        build_results: "{{ build_results_podman if build_results_podman.results[0].rc == 0 else build_results_docker }}"
+        successful_runtime: "{{ 'podman' if build_results_podman.results[0].rc == 0 else 'docker' }}"
+
+    # Display build summary with runtime used
     - name: Display build results
       ansible.builtin.debug:
-        msg: "Built {{ environment_list | length }} environments: {{ environment_list | join(', ') }}"
+        msg: "Built {{ environment_list | length }} environments using {{ successful_runtime }}: {{ environment_list | join(', ') }}"
+
+    # Report any failures
+    - name: Report build failures
+      ansible.builtin.debug:
+        msg: "FAILED to build {{ item.item }} with both podman and docker"
+      loop: "{{ build_results_docker.results | default([]) }}"
+      when: 
+        - build_results_docker is defined
+        - item is defined
+        - item.rc is defined
+        - item.rc != 0
+        - build_results_podman.results[ansible_loop.index0] is defined
+        - build_results_podman.results[ansible_loop.index0].rc != 0

@@ -1,0 +1,72 @@
+# Dependencies
+node_modules/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Build outputs
+build/
+dist/
+*.egg-info/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+/var/log/
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Cache directories
+.cache/
+.npm/
+.yarn/
+
+# Frontend specific
+frontend/node_modules/
+frontend/build/
+frontend/.cache/
+frontend/coverage/
+
+# Backend specific
+backend/__pycache__/
+backend/*.pyc
+backend/.pytest_cache/
+
+# Temporary files
+*.tmp
+*.temp
+tmp/
+temp/
+
+# Package manager files
+package-lock.json.bak
+yarn.lock.bak
+
+# Container runtime files
+*.sock
+
+# Ansible artifacts
+*.retry
+.ansible/
+
+# Git LFS
+*.pack

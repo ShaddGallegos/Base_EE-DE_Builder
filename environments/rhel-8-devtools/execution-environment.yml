@@ -3,13 +3,13 @@ version: 3
 
 images:
   base_image:
-    name: 'registry.redhat.io/ansible-automation--25/ansible-dev-tools-rhel8:latest'
+    name: 'registry.redhat.io/ansible-automation-platform-25/ansible-dev-tools-rhel8:latest'
     options:
       pull_policy: missing
       tls_verify: false
 
 additional_build_files:
-  - src: "{{ playbook_dir }}/templates/ansible.cfg.j2"
+  - src: "templates/ansible.cfg.j2"
     dest: configs/ansible.cfg
 
 dependencies:
