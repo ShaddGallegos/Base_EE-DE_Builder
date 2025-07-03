@@ -1,3 +1,5 @@
+ansible-core
+ansible-runner
 cryptography
 dnspython
 ipaddress

@@ -1,2 +1,12 @@
 ansible-core
 ansible-runner
+cryptography
+dnspython
+ipaddress
+jinja2
+krb5
+lxml
+pyspnego
+pyvmomi
+requests
+sansldap
