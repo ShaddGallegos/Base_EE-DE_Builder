@@ -1,15 +1,10 @@
-ansible-core
-ansible-runner
 cryptography
 dnspython
 ipaddress
 jinja2
-jmespath
 krb5
 lxml
 pyspnego
 pyvmomi
 requests
 sansldap
-six
-sudo
