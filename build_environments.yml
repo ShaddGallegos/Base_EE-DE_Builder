@@ -159,32 +159,67 @@
       ignore_errors: true
 
     # NEW: Try building with podman first, then fallback to docker
-    - name: Build execution environments with podman
-      ansible.builtin.command: >
-        /usr/local/bin/ansible-builder build
-        --build-arg ANSIBLE_GALAXY_CLI_COLLECTION_OPTS=--ignore-certs
-        --container-runtime podman
-        --file {{ environments_dir }}/{{ item }}/execution-environment.yml
-        --prune
-        --tag {{ item }}:{{ ansible_date_time.date }}-{{ ansible_date_time.hour }}{{ ansible_date_time.minute }}{{ ansible_date_time.second }}
-        --verbosity 1
-      args:
-        chdir: "{{ environments_dir }}/{{ item }}"
+    - name: Clean podman system before builds
+      ansible.builtin.shell: |
+        podman system reset --force
+      ignore_errors: true
+
+    - name: Build execution environments with podman (sequential to avoid resource issues)
+      ansible.builtin.shell: |
+        set -e
+        cd "{{ environments_dir }}/{{ item }}"
+        
+        echo "Building {{ item }}..."
+        
+        # Clean up any existing context
+        rm -rf context/ || true
+        
+        # Wait a bit to avoid race conditions
+        sleep 5
+        
+        # Try build with reduced parallelism and timeout
+        timeout 1800 /usr/local/bin/ansible-builder build \
+          --build-arg ANSIBLE_GALAXY_CLI_COLLECTION_OPTS=--ignore-certs \
+          --container-runtime podman \
+          --file execution-environment.yml \
+          --prune \
+          --tag {{ item }}:{{ ansible_date_time.date }}-{{ ansible_date_time.hour }}{{ ansible_date_time.minute }}{{ ansible_date_time.second }} \
+          --verbosity 1 \
+          --build-arg BUILDAH_FORMAT=docker \
+          --build-arg MAX_JOBS=2 || exit 1
+        
+        echo "Successfully built {{ item }}"
+        
+        # Clean up context after successful build  
+        rm -rf context/ || true
+        
+        # Force garbage collection
+        podman system prune -f || true
       loop: "{{ environment_list }}"
       register: build_results_podman
       ignore_errors: true
+      retries: 2
+      delay: 30
+      throttle: 1
 
     # Fallback: Build with docker if podman failed (and docker is available)
     - name: Build execution environments with docker (fallback)
-      ansible.builtin.command: >
-        /usr/local/bin/ansible-builder build
-        --build-arg ANSIBLE_GALAXY_CLI_COLLECTION_OPTS=--ignore-certs
-        --container-runtime docker
-        --file {{ environments_dir }}/{{ item }}/execution-environment.yml
-        --tag {{ item }}:{{ ansible_date_time.date }}-{{ ansible_date_time.hour }}{{ ansible_date_time.minute }}{{ ansible_date_time.second }}
-        --verbosity 1
-      args:
-        chdir: "{{ environments_dir }}/{{ item }}"
+      ansible.builtin.shell: |
+        set -e
+        cd "{{ environments_dir }}/{{ item }}"
+        
+        # Clean up any existing context
+        rm -rf context/ || true
+        
+        timeout 1800 /usr/local/bin/ansible-builder build \
+          --build-arg ANSIBLE_GALAXY_CLI_COLLECTION_OPTS=--ignore-certs \
+          --container-runtime docker \
+          --file execution-environment.yml \
+          --tag {{ item }}:{{ ansible_date_time.date }}-{{ ansible_date_time.hour }}{{ ansible_date_time.minute }}{{ ansible_date_time.second }} \
+          --verbosity 1 || exit 1
+          
+        # Clean up context after build
+        rm -rf context/ || true
       loop: "{{ environment_list }}"
       register: build_results_docker
       when: 
@@ -194,19 +229,32 @@
       loop_control:
         extended: true
 
-    # Clean up dangling images after builds
-    - name: Clean up dangling podman images
+    # Clean up dangling images and system resources after builds
+    - name: Aggressive cleanup of podman resources
       ansible.builtin.shell: |
+        echo "Starting comprehensive cleanup..."
+        
+        # Remove all dangling images
         dangling_images=$(podman images --filter dangling=true --quiet)
         if [ -n "$dangling_images" ]; then
-          echo "Found dangling images, attempting to remove..."
-          # Try to remove images, but continue even if some are in use
+          echo "Found dangling images, removing..."
           for image in $dangling_images; do
             podman image rm $image 2>/dev/null && echo "Deleted: $image" || echo "Skipped: $image (in use)"
           done
         else
           echo "No dangling images to remove"
         fi
+        
+        # Clean up build cache and temporary files
+        podman system prune -f --volumes || true
+        
+        # Reset podman if needed (aggressive cleanup)
+        if [ "$(podman images --quiet | wc -l)" -gt 50 ]; then
+          echo "Too many images, performing system reset..."
+          podman system reset --force || true
+        fi
+        
+        echo "Cleanup completed"
       ignore_errors: true
       register: cleanup_result
 

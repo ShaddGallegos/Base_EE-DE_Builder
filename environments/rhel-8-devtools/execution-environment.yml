@@ -9,7 +9,7 @@ images:
       tls_verify: false
 
 additional_build_files:
-  - src:  templates/ansible.cfg.j2
+  - src: "../../templates/ansible.cfg"
     dest: configs/ansible.cfg
 
 dependencies:
