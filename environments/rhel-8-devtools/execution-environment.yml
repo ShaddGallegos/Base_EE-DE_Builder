@@ -9,13 +9,17 @@ images:
       tls_verify: false
 
 additional_build_files:
-  - src: "templates/ansible.cfg.j2"
+  - src:  templates/ansible.cfg.j2
     dest: configs/ansible.cfg
 
 dependencies:
   python: requirements.txt
   system: bindep.txt
   galaxy: requirements.yml
+  ansible_core:
+    package_pip: ansible-core>=2.15.0
+  ansible_runner:
+    package_pip: ansible-runner>=2.3.0
 
 options:
   package_manager_path: /usr/bin/microdnf
@@ -23,6 +27,8 @@ options:
 additional_build_steps:
   prepend_builder: |
     RUN microdnf install -y python3.11 python3.11-pip python3.11-devel python3.11-pyyaml 
+    # Work around missing openshift-clients package in RHEL 8
+    RUN mkdir -p /usr/bin && echo '#!/bin/bash' > /usr/bin/oc && chmod +x /usr/bin/oc 
 
   prepend_final: |
     # Install Chrome dependencies
