@@ -132,31 +132,27 @@
         label: "{{ item.item }}"
 
     # Launch monitoring terminal with tmux split panes
-    - name: Create podman monitor script
+    - name: Copy podman monitor script to /tmp for tmux session
       ansible.builtin.copy:
+        src: "{{ playbook_dir }}/scripts/monitor_script.sh"
         dest: /tmp/monitor_script.sh
         mode: '0755'
-        content: |
-          #!/bin/bash
-          clear
-          cat "{{ playbook_dir }}/Images/asciiable.txt"
-          echo ""
-          echo "=== Podman Images Monitor ==="
-          echo ""
-          sudo watch -n 0.05 podman images
 
-    - name: Launch tmux session with podman monitoring split
-      ansible.builtin.shell: |
-        tmux new-session -d -s podman_monitor \
-          "bash /tmp/monitor_script.sh"
-        tmux split-window -h -t podman_monitor \
-          "bash"
-        tmux select-layout -t podman_monitor even-horizontal
-        tmux attach-session -t podman_monitor
-      async: 300
-      poll: 0
+    - name: Launch tmux session with podman monitoring split in visible terminal
+      ansible.builtin.shell: >
+        nohup bash {{ playbook_dir }}/scripts/launch_tmux_monitor.sh > /tmp/tmux_launch.log 2>&1 &
       register: tmux_launch
       ignore_errors: true
+
+    - name: Wait for terminal to launch
+      ansible.builtin.pause:
+        seconds: 3
+        prompt: "Launching monitoring terminal... (will continue automatically)"
+      
+    - name: Wait briefly to ensure terminal has time to launch
+      ansible.builtin.pause:
+        seconds: 3
+        prompt: "Launching monitoring terminal... (will continue automatically)"
 
     # NEW: Try building with podman first, then fallback to docker
     - name: Clean podman system before builds
@@ -169,29 +165,75 @@
         set -e
         cd "{{ environments_dir }}/{{ item }}"
         
+        echo "=========================="
         echo "Building {{ item }}..."
+        echo "=========================="
+        echo "Environment: {{ item }}"
+        echo "Start time: $(date)"
+        echo "=========================="
         
         # Clean up any existing context
-        rm -rf context/ || true
+        sudo rm -rf context/ || rm -rf context/ || true
         
         # Wait a bit to avoid race conditions
         sleep 5
         
-        # Try build with reduced parallelism and timeout
+        # Build with real-time output and increased verbosity
         timeout 1800 /usr/local/bin/ansible-builder build \
           --build-arg ANSIBLE_GALAXY_CLI_COLLECTION_OPTS=--ignore-certs \
           --container-runtime podman \
           --file execution-environment.yml \
           --prune \
           --tag {{ item }}:{{ ansible_date_time.date }}-{{ ansible_date_time.hour }}{{ ansible_date_time.minute }}{{ ansible_date_time.second }} \
-          --verbosity 1 \
+          --verbosity 3 \
           --build-arg BUILDAH_FORMAT=docker \
-          --build-arg MAX_JOBS=2 || exit 1
+          --build-arg MAX_JOBS=2 \
+          --no-cache \
+          2>&1 | while IFS= read -r line; do
+            echo "[$(date '+%H:%M:%S')] $line"
+          done
         
+        build_exit_code=${PIPESTATUS[0]}
+        if [ $build_exit_code -ne 0 ]; then
+          echo "=========================="
+          echo "BUILD FAILED for {{ item }} (rootless)"
+          echo "Exit code: $build_exit_code"
+          echo "Trying rootful podman..."
+          echo "=========================="
+          
+          # Try with rootful podman
+          sudo timeout 1800 /usr/local/bin/ansible-builder build \
+            --build-arg ANSIBLE_GALAXY_CLI_COLLECTION_OPTS=--ignore-certs \
+            --container-runtime podman \
+            --file execution-environment.yml \
+            --prune \
+            --tag {{ item }}:{{ ansible_date_time.date }}-{{ ansible_date_time.hour }}{{ ansible_date_time.minute }}{{ ansible_date_time.second }} \
+            --verbosity 3 \
+            --build-arg BUILDAH_FORMAT=docker \
+            --build-arg MAX_JOBS=2 \
+            --no-cache \
+            2>&1 | while IFS= read -r line; do
+              echo "[$(date '+%H:%M:%S')] $line"
+            done
+          
+          rootful_exit_code=${PIPESTATUS[0]}
+          if [ $rootful_exit_code -ne 0 ]; then
+            echo "=========================="
+            echo "ROOTFUL BUILD ALSO FAILED for {{ item }}"
+            echo "Exit code: $rootful_exit_code"
+            echo "End time: $(date)"
+            echo "=========================="
+            exit $rootful_exit_code
+          fi
+        fi
+        
+        echo "=========================="
         echo "Successfully built {{ item }}"
+        echo "End time: $(date)"
+        echo "=========================="
         
         # Clean up context after successful build  
-        rm -rf context/ || true
+        sudo rm -rf context/ || rm -rf context/ || true
         
         # Force garbage collection
         podman system prune -f || true
@@ -208,15 +250,42 @@
         set -e
         cd "{{ environments_dir }}/{{ item }}"
         
+        echo "=========================="
+        echo "FALLBACK: Building {{ item }} with docker..."
+        echo "=========================="
+        echo "Environment: {{ item }}"
+        echo "Start time: $(date)"
+        echo "=========================="
+        
         # Clean up any existing context
         rm -rf context/ || true
         
+        # Build with real-time output and increased verbosity
         timeout 1800 /usr/local/bin/ansible-builder build \
           --build-arg ANSIBLE_GALAXY_CLI_COLLECTION_OPTS=--ignore-certs \
           --container-runtime docker \
           --file execution-environment.yml \
           --tag {{ item }}:{{ ansible_date_time.date }}-{{ ansible_date_time.hour }}{{ ansible_date_time.minute }}{{ ansible_date_time.second }} \
-          --verbosity 1 || exit 1
+          --verbosity 3 \
+          --no-cache \
+          2>&1 | while IFS= read -r line; do
+            echo "[$(date '+%H:%M:%S')] $line"
+          done
+        
+        build_exit_code=${PIPESTATUS[0]}
+        if [ $build_exit_code -ne 0 ]; then
+          echo "=========================="
+          echo "DOCKER BUILD FAILED for {{ item }}"
+          echo "Exit code: $build_exit_code"
+          echo "End time: $(date)"
+          echo "=========================="
+          exit $build_exit_code
+        fi
+        
+        echo "=========================="
+        echo "Successfully built {{ item }} with docker"
+        echo "End time: $(date)"
+        echo "=========================="
           
         # Clean up context after build
         rm -rf context/ || true

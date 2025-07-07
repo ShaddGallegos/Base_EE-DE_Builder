@@ -55,8 +55,21 @@ ARG PKGMGR
 
 RUN $PYCMD -m pip install --no-cache-dir bindep pyyaml packaging
 RUN microdnf install -y python3.11 python3.11-pip python3.11-devel python3.11-pyyaml 
+
 # Work around missing openshift-clients package in RHEL 8
-RUN mkdir -p /usr/bin && echo '#!/bin/bash' > /usr/bin/oc && chmod +x /usr/bin/oc
+RUN mkdir -p /usr/bin && echo '#!/bin/bash' > /usr/bin/oc && chmod +x /usr/bin/oc 
+
+# Create wrapper script for microdnf that ignores openshift-clients
+RUN mv /usr/bin/microdnf /usr/bin/microdnf.real && \
+    echo '#!/bin/bash' > /usr/bin/microdnf && \
+    echo 'args=()' >> /usr/bin/microdnf && \
+    echo 'for arg in "$@"; do' >> /usr/bin/microdnf && \
+    echo '  if [[ "$arg" != "openshift-clients" ]]; then' >> /usr/bin/microdnf && \
+    echo '    args+=("$arg")' >> /usr/bin/microdnf && \
+    echo '  fi' >> /usr/bin/microdnf && \
+    echo 'done' >> /usr/bin/microdnf && \
+    echo '/usr/bin/microdnf.real "${args[@]}"' >> /usr/bin/microdnf && \
+    chmod +x /usr/bin/microdnf
 
 COPY --from=galaxy /usr/share/ansible /usr/share/ansible
 
@@ -83,7 +96,7 @@ RUN microdnf install -y liberation-fonts libappindicator-gtk3 liberation-sans-fo
 
 # Download and install Chrome
 RUN curl -sSLO https://dl.google.com/linux/direct/google-chrome-stable_current_x86_64.rpm && \
-    microdnf install -y google-chrome-stable_current_x86_64.rpm && \
+    rpm -i google-chrome-stable_current_x86_64.rpm && \
     rm -f google-chrome-stable_current_x86_64.rpm
 
 # Standard upgrade steps

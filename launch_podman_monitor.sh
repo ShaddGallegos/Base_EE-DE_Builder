@@ -1,0 +1,1 @@
+/home/sgallego/Downloads/GIT/Base_EE-DE_Builder/scripts/launch_monitor.sh

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Name=EE-DE Podman Monitor
+Comment=Launch a terminal with podman monitoring for EE-DE Builder
+Exec=/home/sgallego/Downloads/GIT/Base_EE-DE_Builder/scripts/launch_monitor.sh
+Icon=utilities-terminal
+Terminal=false
+Type=Application
+Categories=Development;Utility;
+StartupNotify=true
