@@ -1,0 +1,54 @@
+---
+- name: Pull Execution Environments from Automation Hub to Controller
+  hosts: localhost
+  gather_facts: no
+  vars:
+    automation_hub_url: "automationhub.example.com"
+    username: "admin"
+    password: "redhat"
+    images:
+      - "rhel-9-de-supported:latest"
+      - "rhel-9-ee-supported:latest"
+      - "rhel-9-de-minimal:latest"
+      - "rhel-9-ee-minimal:latest"
+      - "rhel-8-ee-supported:latest"
+      - "rhel-8-de-supported:latest"
+      - "rhel-8-ee-minimal:latest"
+      - "rhel-8-de-minimal:latest"
+
+  tasks:
+    - name: Log into Automation Hub
+      ansible.builtin.shell:
+        cmd: "podman login -u {{ username }} -p {{ password }} {{ automation_hub_url }}"
+      register: login_result
+      changed_when: login_result.rc == 0
+
+    - name: Pull images from Automation Hub
+      ansible.builtin.shell:
+        cmd: "podman pull {{ automation_hub_url }}/{{ item }}"
+      loop: "{{ images }}"
+      changed_when: true
+
+    - name: Tag images for Controller use
+      ansible.builtin.shell:
+        cmd: "podman tag {{ automation_hub_url }}/{{ item }} localhost/{{ item }}"
+      loop: "{{ images }}"
+      changed_when: true
+
+    - name: Verify images are available for Controller
+      ansible.builtin.shell:
+        cmd: "podman images | grep {{ item }}"
+      loop: "{{ images }}"
+      register: image_check
+      changed_when: false
+
+    - name: Display available images
+      ansible.builtin.debug:
+        msg: "Image {{ item }} is available for use."
+      loop: "{{ images }}"
+      when: item in image_check.stdout
+      
+    - name: Reset podman storage after transfer
+      ansible.builtin.shell:
+        cmd: "podman system reset -f"
+      changed_when: true

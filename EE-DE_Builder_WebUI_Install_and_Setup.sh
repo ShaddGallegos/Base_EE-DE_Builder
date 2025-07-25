@@ -1,4 +1,11 @@
-bj#!/usr/bin/env bash
+#!/bin/bash
+# User-configurable variables - modify as needed
+USER="${USER}"
+USER_EMAIL="${USER}@${COMPANY_DOMAIN:-example.com}"
+COMPANY_NAME="${COMPANY_NAME:-Your Company}"
+COMPANY_DOMAIN="${COMPANY_DOMAIN:-example.com}"
+
+#!/usr/bin/env bash
 # EE-DE_Builder_WebUI_setup.sh
 # Sets up UI environment for EE/DE_Builder_WebUI on Fedora/RHEL
 # Logs all output to /var/log/EE-DE_Builder_WebUI.log
@@ -157,14 +164,17 @@ pip3 install --upgrade pip wheel setuptools
 #make setup && make dev \
 #  || fail "make setup/dev failed."
 
-# 16. Run UI build as regular user
-log "Running UI build as regular user..."
+# 16. Run UI build as root (prompt for sudo creds)
+log "Running UI build as root; you will be prompted for your sudo password"
 
-# Execute make as the current user (not root)
-if make setup && make dev; then
-  log "UI build completed successfully."
+# Invalidate any existing sudo timestamp so we always get a fresh prompt
+sudo -k
+
+# Execute make under a root shell
+if sudo bash -c "make setup && make dev"; then
+  log "UI build completed successfully as root."
 else
-  fail "UI build failed."
+  fail "UI build failed under root."
 fi
 
 # 17. Install launchers and desktop integration
@@ -229,7 +239,7 @@ for desktop_file in "$LAUNCHERS_DIR"/*.desktop; do
     target_file="$HOME/.local/share/applications/$filename"
     
     # Copy desktop file and update paths to use absolute paths
-    sed "s|/home/sgallego/Downloads/Base_EE-DE_Builder|$PROJECT_ROOT|g; s|/path/to/project|$PROJECT_ROOT|g" "$desktop_file" > "$target_file"
+    sed "s|/home/${USER}/Downloads/Base_EE-DE_Builder|$PROJECT_ROOT|g" "$desktop_file" > "$target_file"
     chmod +x "$target_file"
     
     log "Installed desktop file: $filename"
@@ -261,7 +271,7 @@ if [ -d "$HOME/Desktop" ]; then
       desktop_target="$HOME/Desktop/$filename"
       
       # Copy and update desktop file for Desktop directory
-      sed "s|/home/sgallego/Downloads/Base_EE-DE_Builder|$PROJECT_ROOT|g; s|/path/to/project|$PROJECT_ROOT|g" "$desktop_file" > "$desktop_target"
+      sed "s|/home/${USER}/Downloads/Base_EE-DE_Builder|$PROJECT_ROOT|g" "$desktop_file" > "$desktop_target"
       chmod +x "$desktop_target"
       
       # Mark as trusted (for GNOME)
@@ -327,7 +337,7 @@ for desktop_file in "$LAUNCHERS_DIR"/*.desktop; do
     # Copy and update desktop file for system-wide installation
     # First create a temporary file with updated paths, then copy with sudo
     temp_file=$(mktemp)
-    if sed "s|/home/sgallego/Downloads/Base_EE-DE_Builder|$PROJECT_ROOT|g; s|/path/to/project|$PROJECT_ROOT|g" "$desktop_file" > "$temp_file"; then
+    if sed "s|/home/${USER}/Downloads/Base_EE-DE_Builder|$PROJECT_ROOT|g" "$desktop_file" > "$temp_file"; then
       if sudo cp "$temp_file" "$system_target" && sudo chmod 644 "$system_target"; then
         log "Installed system-wide desktop file: $filename"
       else

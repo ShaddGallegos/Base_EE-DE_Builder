@@ -1,72 +1,49 @@
-# Dependencies
-node_modules/
-venv/
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python
+# Ignore Python cache and backup files
+**/__pycache__/
+**/*.py[cod]
+**/*.orig
+**/*.bak
+**/*.swp
+**/*.tmp
+**/*.latest.*
+**/*.working_advanced
+**/*.everything_but_wizard
 
-# Build outputs
-build/
-dist/
-*.egg-info/
+# Ignore virtual environment
+backend/venv/
 
-# IDE files
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# OS files
-.DS_Store
-Thumbs.db
-
-# Logs
-*.log
-logs/
-/var/log/
-
-# Environment variables
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-
-# Cache directories
-.cache/
-.npm/
-.yarn/
-
-# Frontend specific
+# Ignore frontend/node artifacts if they exist
 frontend/node_modules/
 frontend/build/
-frontend/.cache/
-frontend/coverage/
+frontend/dist/
+*.log
+*.lock
 
-# Backend specific
-backend/__pycache__/
-backend/*.pyc
-backend/.pytest_cache/
+# Ignore macOS system files
+.DS_Store
 
-# Temporary files
-*.tmp
-*.temp
-tmp/
-temp/
+# Ignore artifact folders if only used for packaging
+artifact/__pycache__/
 
-# Package manager files
-package-lock.json.bak
-yarn.lock.bak
+# IDE/editor configs
+.vscode/
+.idea/
 
-# Container runtime files
-*.sock
+# Ignore compiled binary links (e.g., pip-installed symlinks in venv)
+backend/venv/bin/
+!backend/venv/bin/activate*
+!backend/venv/bin/pip*
+!backend/venv/bin/python*
 
-# Ansible artifacts
-*.retry
-.ansible/
+# Ignore Python build artifacts
+*.egg-info/
+.eggs/
+*.manifest
+*.spec
 
-# Git LFS
-*.pack
+# Ignore test output, coverage reports
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+

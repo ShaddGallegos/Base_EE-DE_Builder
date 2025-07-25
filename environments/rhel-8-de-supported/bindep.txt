@@ -1,5 +1,4 @@
 gcc
-krb5-devel
 microdnf
 pkgconf-pkg-config
 python3.11-devel

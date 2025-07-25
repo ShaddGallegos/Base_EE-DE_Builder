@@ -1,0 +1,49 @@
+---
+- name: Upload Execution Environments to Automation Hub
+  hosts: localhost
+  gather_facts: no
+  vars:
+    automation_hub_url: "automationhub.example.com"
+    username: "admin"
+    password: "redhat"
+    images:
+      - "localhost/rhel-9-de-supported:latest"
+      - "localhost/rhel-9-ee-supported:latest"
+      - "localhost/rhel-9-de-minimal:latest"
+      - "localhost/rhel-9-ee-minimal:latest"
+      - "localhost/rhel-8-ee-supported:latest"
+      - "localhost/rhel-8-de-supported:latest"
+      - "localhost/rhel-8-ee-minimal:latest"
+      - "localhost/rhel-8-de-minimal:latest"
+
+  tasks:
+    - name: Check if Automation Hub is reachable
+      ansible.builtin.uri:
+        url: "https://{{ automation_hub_url }}"
+        method: GET
+        return_content: yes
+      register: hub_status
+      ignore_errors: yes
+
+    - name: Fail if Automation Hub is not reachable
+      ansible.builtin.fail:
+        msg: "Automation Hub is unreachable!"
+      when: hub_status.status != 200
+
+    - name: Log into Automation Hub
+      ansible.builtin.shell:
+        cmd: "podman login -u {{ username }} -p {{ password }} {{ automation_hub_url }}"
+      register: login_result
+      changed_when: login_result.rc == 0
+
+    - name: Push images to Automation Hub
+      ansible.builtin.shell:
+        cmd: "podman tag {{ item }} {{ automation_hub_url }}/{{ item.split(':')[0].split('/')[-1] }}:latest &&
+              podman push {{ automation_hub_url }}/{{ item.split(':')[0].split('/')[-1] }}:latest"
+      loop: "{{ images }}"
+      changed_when: true
+
+    - name: Reset podman storage after transfer
+      ansible.builtin.shell:
+        cmd: "podman system reset -f"
+      changed_when: true
