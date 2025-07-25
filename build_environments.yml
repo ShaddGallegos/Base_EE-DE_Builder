@@ -45,8 +45,17 @@
       changed_when: false
       failed_when: false
     - name: Debug firewalld status after change
+      ansible.builtin.set_fact:
+        firewalld_status_msg: >-
+          {{
+            firewalld_status_after.status
+              if firewalld_status_after is defined
+              and firewalld_status_after.status is defined
+              else firewalld_status_after
+          }}
+    - name: Debug firewalld status after change
       ansible.builtin.debug:
-        msg: "firewalld status after change: {{ firewalld_status_after.status if firewalld_status_after is defined and firewalld_status_after.status is defined else firewalld_status_after }}"
+        msg: "firewalld status after change: {{ firewalld_status_msg }}"
     - name: Add user to podman and docker groups if not already a member
       become: true
       ansible.builtin.user:
@@ -337,9 +346,16 @@
 
     - name: Show build command and PATH for each environment
       ansible.builtin.shell: |
+        set -o pipefail
         echo "PATH before build: $PATH"
         echo "Building environment: {{ item }}"
-        echo "PATH: $PATH | Building: {{ item }} | Command: ansible-builder build --build-arg ANSIBLE_GALAXY_CLI_COLLECTION_OPTS=--ignore-certs --container-runtime {{ container_runtime | default('podman') }} --file /tmp/ee-build-{{ item }}/execution-environment.yml --tag {{ item }}:latest --verbosity 1"
+        echo "PATH: $PATH"
+        echo "Building: {{ item }}"
+        echo "Command: ansible-builder build --build-arg ANSIBLE_GALAXY_CLI_COLLECTION_OPTS=--ignore-certs \\"
+        echo "         --container-runtime {{ container_runtime | default('podman') }} \\"
+        echo "         --file /tmp/ee-build-{{ item }}/execution-environment.yml \\"
+        echo "         --tag {{ item }}:latest \\"
+        echo "         --verbosity 1"
       environment:
         PATH: "{{ lookup('env', 'HOME') }}/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin:{{ lookup('env', 'PATH') }}"
       register: debug_build_env
@@ -347,6 +363,26 @@
       changed_when: false
       failed_when: false
 
+    # Calculate checksum of execution-environment.yml for each environment
+    - name: Get checksum of execution-environment.yml
+      ansible.builtin.stat:
+        path: "/tmp/ee-build-{{ item }}/execution-environment.yml"
+        checksum_algorithm: sha1
+      register: ee_yml_stat
+      loop: "{{ environment_list }}"
+      loop_control:
+        label: "{{ item }}"
+
+    # NEW: Get last build checksum for each environment
+    - name: Get last build checksum for each environment
+      ansible.builtin.stat:
+        path: "/tmp/ee-build-{{ item }}/.last_build_checksum"
+      register: last_build_checksum_stat
+      loop: "{{ environment_list }}"
+      loop_control:
+        label: "{{ item }}"
+
+    # Build execution environments in /tmp only if execution-environment.yml changed
     - name: Build execution environments in /tmp
       ansible.builtin.shell: |
         ansible-builder build \
@@ -362,8 +398,12 @@
         PATH: "{{ lookup('env', 'HOME') }}/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin:{{ lookup('env', 'PATH') }}"
       loop: "{{ environment_list }}"
       register: build_results
+      when: >
+        ee_yml_stat.results[loop.index0].checksum !=
+        (last_build_checksum_stat.results[loop.index0].stat.exists | ternary(last_build_checksum_stat.results[loop.index0].stat.checksum, ''))
+      changed_when: true
       failed_when: false
-
+      notify: Save new checksum after build
 
     # NEW: Optional build summary and error reporting
     - name: Display build results
@@ -374,3 +414,13 @@
             stdout: {{ item.stdout }}
             stderr: {{ item.stderr }}
       loop: "{{ build_results.results }}"
+
+  handlers:
+    - name: Save new checksum after build
+      ansible.builtin.copy:
+        dest: "/tmp/ee-build-{{ item }}/.last_build_checksum"
+        content: "{{ ee_yml_stat.results[loop.index0].checksum }}"
+        mode: '0644'
+      loop: "{{ environment_list }}"
+      when: build_results.results[loop.index0].changed
+      failed_when: false
