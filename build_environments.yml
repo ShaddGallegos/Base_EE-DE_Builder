@@ -4,7 +4,6 @@
   connection: local
   gather_facts: true
   vars:
-    # Directory containing execution environments
     environments_dir: "{{ playbook_dir }}/environments"
     
   tasks:

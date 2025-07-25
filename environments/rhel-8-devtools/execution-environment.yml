@@ -44,17 +44,6 @@ additional_build_steps:
         chmod +x /usr/bin/microdnf 
 
   prepend_final: |
-    # Install Chrome dependencies
-    RUN microdnf install -y liberation-fonts libappindicator-gtk3 liberation-sans-fonts \
-                            liberation-serif-fonts xdg-utils libXScrnSaver libX11 \
-                            mesa-libGLU redhat-lsb
-
-    # Download and install Chrome
-    RUN curl -sSLO https://dl.google.com/linux/direct/google-chrome-stable_current_x86_64.rpm && \
-        rpm -i google-chrome-stable_current_x86_64.rpm && \
-        rm -f google-chrome-stable_current_x86_64.rpm
-
-    # Standard upgrade steps
     RUN microdnf upgrade -y \
         && python3 -m pip install --no-cache-dir --upgrade --ignore-installed pip setuptools wheel jmespath six
 
@@ -63,3 +52,4 @@ additional_build_steps:
     RUN microdnf clean all && \
         rm -rf /var/cache/{dnf,yum} && \
         rm -rf /etc/ansible/ansible.cfg
+
