@@ -34,12 +34,12 @@ server_list = published, validated, community_galaxy
 [galaxy_server.published]
 url = https://console.redhat.com/api/automation-hub/content/published/
 auth_url = https://sso.redhat.com/auth/realms/redhat-external/protocol/openid-connect/token
-#token = {{ lookup('env', 'RH_CREDENTIALS_TOKEN') }}
+token = {{ lookup('env', 'RH_CREDENTIALS_TOKEN') }}
 
 [galaxy_server.validated]
 url = https://console.redhat.com/api/automation-hub/content/validated/
 auth_url = https://sso.redhat.com/auth/realms/redhat-external/protocol/openid-connect/token
-#token = {{ lookup('env', 'RH_CREDENTIALS_TOKEN') }}
+token = {{ lookup('env', 'RH_CREDENTIALS_TOKEN') }}
 
 [galaxy_server.community_galaxy]
 url = https://galaxy.ansible.com/

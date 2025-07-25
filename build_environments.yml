@@ -7,69 +7,25 @@
     environments_dir: "{{ playbook_dir }}/environments"
 
   pre_tasks:
-    - name: Check current SELinux status
-      ansible.builtin.command: getenforce
-      register: current_selinux_status
-      changed_when: false
-      failed_when: false
-
-    - name: Set SELinux to permissive for playbook run (only if enforcing)
+    # --- System/User Setup ---
+    - name: Ensure subuid mapping for user
       become: true
-      ansible.posix.selinux:
-        policy: targeted
-        state: permissive
-      when: current_selinux_status.stdout == "Enforcing"
+      ansible.builtin.lineinfile:
+        path: /etc/subuid
+        regexp: "^{{ lookup('env', 'USER') }}:"
+        line: "{{ lookup('env', 'USER') }}:100000:65536"
+        create: yes
+        mode: '0644'
       failed_when: false
 
-    - name: Display SELinux status after change
-      ansible.builtin.command: getenforce
-      register: selinux_status_after
-      changed_when: false
-      failed_when: false
-    - name: Debug SELinux status after change
-      ansible.builtin.debug:
-        msg: "SELinux status after change: {{ selinux_status_after.stdout }}"
-
-    - name: Stop and disable firewalld for playbook run
+    - name: Ensure subgid mapping for user
       become: true
-      ansible.builtin.service:
-        name: firewalld
-        state: stopped
-        enabled: false
-      failed_when: false
-
-    - name: Display firewalld status after change
-      ansible.builtin.systemd:
-        name: firewalld
-      register: firewalld_status_after
-      changed_when: false
-      failed_when: false
-    - name: Debug firewalld status after change
-      ansible.builtin.set_fact:
-        firewalld_status_msg: >-
-          {{
-            firewalld_status_after.status
-              if firewalld_status_after is defined
-              and firewalld_status_after.status is defined
-              else firewalld_status_after
-          }}
-    - name: Debug firewalld status after change
-      ansible.builtin.debug:
-        msg: "firewalld status after change: {{ firewalld_status_msg }}"
-    - name: Add user to podman and docker groups if not already a member
-      become: true
-      ansible.builtin.user:
-        name: "{{ lookup('env', 'USER') }}"
-        groups: podman,docker
-        append: true
-      failed_when: false
-
-    # Ensure newuidmap and newgidmap are installed and setuid root
-    - name: Ensure shadow-utils is installed (provides newuidmap/newgidmap)
-      become: true
-      ansible.builtin.dnf:
-        name: shadow-utils
-        state: present
+      ansible.builtin.lineinfile:
+        path: /etc/subgid
+        regexp: "^{{ lookup('env', 'USER') }}:"
+        line: "{{ lookup('env', 'USER') }}:100000:65536"
+        create: yes
+        mode: '0644'
       failed_when: false
 
     - name: Ensure newuidmap is setuid root
@@ -86,8 +42,14 @@
         mode: '4755'
       failed_when: false
 
-    # Ensure subuid/subgid ranges for current user
-    - name: Ensure subuid range for user
+    - name: Ensure shadow-utils is installed (provides newuidmap/newgidmap)
+      become: true
+      ansible.builtin.dnf:
+        name: shadow-utils
+        state: present
+      failed_when: false
+
+    - name: Ensure subuid/subgid ranges for current user
       become: true
       ansible.builtin.command: usermod --add-subuids 100000-165535 {{ lookup('env', 'USER') }}
       changed_when: false
@@ -99,50 +61,43 @@
       changed_when: false
       failed_when: false
 
-    - name: Debug subuid/subgid config for user
-      ansible.builtin.shell: |
-        grep $(whoami) /etc/subuid /etc/subgid
-      register: subid_check
-      changed_when: false
+    - name: Add user to podman and docker groups if not already a member
+      become: true
+      ansible.builtin.user:
+        name: "{{ lookup('env', 'USER') }}"
+        groups: podman,docker
+        append: true
       failed_when: false
-    - name: Debug subuid/subgid config output
-      ansible.builtin.debug:
-        msg: "subuid/subgid config: {{ subid_check.stdout }}"
-    - name: Display user group membership after change
-      ansible.builtin.command: id -nG {{ lookup('env', 'USER') }}
-      register: user_groups_after
-      changed_when: false
-      failed_when: false
-    - name: Debug user group membership after change
-      ansible.builtin.debug:
-        msg: "User groups after change: {{ user_groups_after.stdout }}"
 
-    # Clean up contest/ folders in each environment before build
-    - name: Remove contest/ folders in each environment for clean build
+    - name: Ensure user.max_user_namespaces is set high enough
       become: true
-      ansible.builtin.file:
-        path: "{{ environments_dir }}/{{ item }}/contest"
-        state: absent
-      loop: "{{ environment_list | default([]) }}"
-      loop_control:
-        label: "{{ item }}"
+      ansible.builtin.sysctl:
+        name: user.max_user_namespaces
+        value: '28633'
+        sysctl_set: yes
+        state: present
+        reload: yes
       failed_when: false
-    # Ensure Ansible Automation Platform repo is enabled before any dnf install of ansible packages
-    - name: Check if required Ansible Automation Platform repo is enabled
+
+    # --- Dependency Checks ---
+    - name: Stop and disable firewalld for playbook run
       become: true
-      ansible.builtin.shell: |
-        set -o pipefail
-        subscription-manager repos --list-enabled | grep ansible-automation-platform-2.5-for-rhel-9-x86_64-rpms
-      register: aap_repo_enabled
+      ansible.builtin.service:
+        name: firewalld
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Check SELinux status
+      ansible.builtin.command: getenforce
+      register: selinux_status
       changed_when: false
       failed_when: false
 
-    - name: Enable Ansible Automation Platform repo if not enabled
-      become: true
-      ansible.builtin.command: subscription-manager repos --enable=ansible-automation-platform-2.5-for-rhel-9-x86_64-rpms
-      when: aap_repo_enabled.rc != 0
-      changed_when: aap_repo_enabled.rc != 0
-      failed_when: false
+    - name: Warn if SELinux is enforcing
+      ansible.builtin.debug:
+        msg: "WARNING: SELinux is Enforcing. This may cause permission issues. Consider setting to Permissive for troubleshooting."
+      when: selinux_status.stdout is defined and selinux_status.stdout == 'Enforcing'
 
     - name: Ensure python3.12 and python3.12-pip are installed (dnf)
       become: true
@@ -175,26 +130,6 @@
         mode: '0644'
       failed_when: false
 
-    - name: Source .bashrc to enable python3 alias in current session
-      ansible.builtin.shell: |
-        source ~/.bashrc
-        python3 --version
-      register: python3_alias_check
-      changed_when: false
-      failed_when: false
-    - name: Debug python3 alias after sourcing .bashrc
-      ansible.builtin.debug:
-        msg: "python3 version after sourcing .bashrc: {{ python3_alias_check.stdout }}"
-
-    - name: Display python3 version after alternatives change
-      ansible.builtin.command: python3 --version
-      register: python3_version_after
-      changed_when: false
-      failed_when: false
-    - name: Debug python3 version after alternatives change
-      ansible.builtin.debug:
-        msg: "python3 version after alternatives change: {{ python3_version_after.stdout }}"
-
     - name: Ensure python3.12 is enabled for current session
       ansible.builtin.shell: |
         export PATH="/usr/bin:$PATH"
@@ -203,19 +138,8 @@
       register: python3_version_check
       changed_when: false
       failed_when: false
-    # --- Environment and Dependency Checks ---
-    - name: Check SELinux status
-      ansible.builtin.command: getenforce
-      register: selinux_status
-      changed_when: false
-      failed_when: false
 
-    - name: Warn if SELinux is enforcing
-      ansible.builtin.debug:
-        msg: "WARNING: SELinux is Enforcing. This may cause permission issues. Consider setting to Permissive for troubleshooting."
-      when: selinux_status.stdout is defined and selinux_status.stdout == 'Enforcing'
-
-    # --- Check and Install Ansible/ansible-builder ---
+    # --- Ansible/Builder Checks ---
     - name: Check if ansible-playbook is in PATH
       ansible.builtin.command: which ansible-playbook
       register: ansible_playbook_path
@@ -277,7 +201,6 @@
       when: ansible_builder_path.rc != 0
       failed_when: false
 
-    # Ensure ~/.local/bin is in PATH for pip installs
     - name: Ensure ~/.local/bin is in PATH for ansible-builder
       ansible.builtin.shell: |
         export PATH="$HOME/.local/bin:$PATH"
@@ -287,7 +210,6 @@
       when: ansible_builder_path.rc != 0
       failed_when: false
 
-    # --- Final dependency check ---
     - name: Fail if ansible-playbook is not found
       ansible.builtin.fail:
         msg: "ansible-playbook is not in PATH. Please install Ansible or fix your PATH."
@@ -298,8 +220,68 @@
         msg: "ansible-builder is not in PATH. Please install ansible-builder or fix your PATH."
       when: ansible_builder_path.rc != 0
 
+    # --- Repo Checks ---
+    - name: Check if required Ansible Automation Platform repo is enabled
+      become: true
+      ansible.builtin.shell: |
+        set -o pipefail
+        subscription-manager repos --list-enabled | grep ansible-automation-platform-2.5-for-rhel-9-x86_64-rpms
+      register: aap_repo_enabled
+      changed_when: false
+      failed_when: false
+
+    - name: Enable Ansible Automation Platform repo if not enabled
+      become: true
+      ansible.builtin.command: subscription-manager repos --enable=ansible-automation-platform-2.5-for-rhel-9-x86_64-rpms
+      when: aap_repo_enabled.rc != 0
+      changed_when: aap_repo_enabled.rc != 0
+      failed_when: false
+
+    # --- Secret Prompts and Storage (CLI only) ---
+    - name: Detect if running in Automation Platform WebUI
+      set_fact:
+        running_in_webui: "{{ (ansible_env.AWX_TASK_ID is defined) or (ansible_env.ANSIBLE_CONTROLLER_HOST is defined) }}"
+
+    - name: Prompt for Red Hat credentials token
+      ansible.builtin.vars_prompt:
+        name: rh_credentials_token
+        prompt: "Enter your Red Hat Automation Hub token"
+        private: yes
+      when: not running_in_webui
+
+    - name: Prompt for Red Hat CDN username
+      ansible.builtin.vars_prompt:
+        name: redhat_cdn_username
+        prompt: "Enter your Red Hat CDN username"
+        private: no
+      when: not running_in_webui
+
+    - name: Prompt for Red Hat CDN password
+      ansible.builtin.vars_prompt:
+        name: redhat_cdn_password
+        prompt: "Enter your Red Hat CDN password"
+        private: yes
+      when: not running_in_webui
+
+    - name: Ensure ~/.ansible/conf directory exists
+      ansible.builtin.file:
+        path: "{{ lookup('env', 'HOME') }}/.ansible/conf"
+        state: directory
+        mode: '0700'
+      when: not running_in_webui
+
+    - name: Write secrets to ~/.ansible/conf/env.conf
+      ansible.builtin.copy:
+        dest: "{{ lookup('env', 'HOME') }}/.ansible/conf/env.conf"
+        content: |
+          RH_CREDENTIALS_TOKEN={{ rh_credentials_token }}
+          REDHAT_CDN_USERNAME={{ redhat_cdn_username }}
+          REDHAT_CDN_PASSWORD={{ redhat_cdn_password }}
+        mode: '0600'
+      when: not running_in_webui
+
   tasks:
-    # Discover all environment directories in environments_dir
+    # --- Environment Discovery and Validation ---
     - name: Find all available environments
       ansible.builtin.find:
         paths: "{{ environments_dir }}"
@@ -315,7 +297,6 @@
       ansible.builtin.debug:
         msg: "Environments discovered for build: {{ environment_list }}"
 
-    # NEW: Check for execution-environment.yml in each environment
     - name: Check for execution-environment.yml in each environment
       ansible.builtin.stat:
         path: "{{ environments_dir }}/{{ item }}/execution-environment.yml"
@@ -330,8 +311,16 @@
       loop_control:
         label: "{{ item.item }}"
 
-
-    # Debug build command and PATH for each environment
+    # --- Build Context Preparation ---
+    - name: Remove contest/ folders in each environment for clean build
+      become: true
+      ansible.builtin.file:
+        path: "{{ environments_dir }}/{{ item }}/contest"
+        state: absent
+      loop: "{{ environment_list | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      failed_when: false
 
     - name: Prepare /tmp build context for each environment
       ansible.builtin.shell: |
@@ -344,6 +333,17 @@
       changed_when: true
       failed_when: false
 
+    - name: Copy ansible.cfg template to build context for each environment
+      ansible.builtin.template:
+        src: "templates/ansible.cfg.j2"
+        dest: "/tmp/ee-build-{{ item }}/ansible.cfg"
+        mode: '0644'
+      loop: "{{ environment_list }}"
+      loop_control:
+        label: "{{ item }}"
+      failed_when: false
+
+    # --- Build Logic ---
     - name: Show build command and PATH for each environment
       ansible.builtin.shell: |
         set -o pipefail
@@ -363,7 +363,6 @@
       changed_when: false
       failed_when: false
 
-    # Calculate checksum of execution-environment.yml for each environment
     - name: Get checksum of execution-environment.yml
       ansible.builtin.stat:
         path: "/tmp/ee-build-{{ item }}/execution-environment.yml"
@@ -373,7 +372,6 @@
       loop_control:
         label: "{{ item }}"
 
-    # NEW: Get last build checksum for each environment
     - name: Get last build checksum for each environment
       ansible.builtin.stat:
         path: "/tmp/ee-build-{{ item }}/.last_build_checksum"
@@ -382,7 +380,37 @@
       loop_control:
         label: "{{ item }}"
 
-    # Build execution environments in /tmp only if execution-environment.yml changed
+    - name: Debug checksum comparison for each environment
+      ansible.builtin.debug:
+        msg: |
+          ENV: {{ item }}
+          Current checksum: {{
+            ee_yml_stat.results
+              | selectattr('item', 'equalto', item)
+              | map(attribute='stat.checksum')
+              | first | default('')
+          }}
+          Last build checksum: {{
+            last_build_checksum_stat.results
+              | selectattr('item', 'equalto', item)
+              | map(attribute='stat.checksum')
+              | first | default('')
+          }}
+          Will build: {{
+            (
+              ee_yml_stat.results
+                | selectattr('item', 'equalto', item)
+                | map(attribute='stat.checksum')
+                | first | default('')
+            ) != (
+              last_build_checksum_stat.results
+                | selectattr('item', 'equalto', item)
+                | map(attribute='stat.checksum')
+                | first | default('')
+            )
+          }}
+      loop: "{{ environment_list }}"
+
     - name: Build execution environments in /tmp
       ansible.builtin.shell: |
         ansible-builder build \
@@ -399,13 +427,21 @@
       loop: "{{ environment_list }}"
       register: build_results
       when: >
-        ee_yml_stat.results[loop.index0].checksum !=
-        (last_build_checksum_stat.results[loop.index0].stat.exists | ternary(last_build_checksum_stat.results[loop.index0].stat.checksum, ''))
+        (
+          ee_yml_stat.results
+            | selectattr('item', 'equalto', item)
+            | map(attribute='stat.checksum')
+            | first | default('')
+        ) != (
+          last_build_checksum_stat.results
+            | selectattr('item', 'equalto', item)
+            | map(attribute='stat.checksum')
+            | first | default('')
+        )
       changed_when: true
       failed_when: false
       notify: Save new checksum after build
 
-    # NEW: Optional build summary and error reporting
     - name: Display build results
       ansible.builtin.debug:
         msg: |
@@ -419,8 +455,103 @@
     - name: Save new checksum after build
       ansible.builtin.copy:
         dest: "/tmp/ee-build-{{ item }}/.last_build_checksum"
-        content: "{{ ee_yml_stat.results[loop.index0].checksum }}"
+        content: >-
+          {{
+            ee_yml_stat.results
+              | selectattr('item', 'equalto', item)
+              | map(attribute='stat.checksum')
+              | first | default('')
+          }}
         mode: '0644'
       loop: "{{ environment_list }}"
-      when: build_results.results[loop.index0].changed
+      when: >-
+        build_results.results
+          | selectattr('item', 'equalto', item)
+          | map(attribute='changed')
+          | first | default(false)
       failed_when: false
+
+    - name: Debug checksum comparison for each environment
+      ansible.builtin.debug:
+        msg: |
+          ENV: {{ item }}
+          Current checksum: {{
+            ee_yml_stat.results
+              | selectattr('item', 'equalto', item)
+              | map(attribute='stat.checksum')
+              | first | default('')
+          }}
+          Last build checksum: {{
+            last_build_checksum_stat.results
+              | selectattr('item', 'equalto', item)
+              | map(attribute='stat.checksum')
+              | first | default('')
+          }}
+          Will build: {{
+            (
+              ee_yml_stat.results
+                | selectattr('item', 'equalto', item)
+                | map(attribute='stat.checksum')
+                | first | default('')
+            ) != (
+              last_build_checksum_stat.results
+                | selectattr('item', 'equalto', item)
+                | map(attribute='stat.checksum')
+                | first | default('')
+            )
+          }}
+      loop: "{{ environment_list }}"
+
+    # Ensure user is allowed to use user namespaces (for rootless Podman)
+    - name: Ensure user.max_user_namespaces is set high enough
+      become: true
+      ansible.builtin.sysctl:
+        name: user.max_user_namespaces
+        value: '28633'
+        sysctl_set: yes
+        state: present
+        reload: yes
+      failed_when: false
+
+    - name: Detect if running in Automation Platform WebUI
+      set_fact:
+        running_in_webui: "{{ (ansible_env.AWX_TASK_ID is defined) or (ansible_env.ANSIBLE_CONTROLLER_HOST is defined) }}"
+
+    - name: Prompt for Red Hat credentials token
+      ansible.builtin.vars_prompt:
+        name: rh_credentials_token
+        prompt: "Enter your Red Hat Automation Hub token"
+        private: yes
+      when: not running_in_webui
+
+    - name: Prompt for Red Hat CDN username
+      ansible.builtin.vars_prompt:
+        name: redhat_cdn_username
+        prompt: "Enter your Red Hat CDN username"
+        private: no
+      when: not running_in_webui
+
+    - name: Prompt for Red Hat CDN password
+      ansible.builtin.vars_prompt:
+        name: redhat_cdn_password
+        prompt: "Enter your Red Hat CDN password"
+        private: yes
+      when: not running_in_webui
+
+    - name: Ensure ~/.ansible/conf directory exists
+      ansible.builtin.file:
+        path: "{{ lookup('env', 'HOME') }}/.ansible/conf"
+        state: directory
+        mode: '0700'
+      when: not running_in_webui
+
+    - name: Write secrets to ~/.ansible/conf/env.conf
+      ansible.builtin.copy:
+        dest: "{{ lookup('env', 'HOME') }}/.ansible/conf/env.conf"
+        content: |
+          RH_CREDENTIALS_TOKEN={{ rh_credentials_token }}
+          REDHAT_CDN_USERNAME={{ redhat_cdn_username }}
+          REDHAT_CDN_PASSWORD={{ redhat_cdn_password }}
+        mode: '0600'
+      when: not running_in_webui
+
