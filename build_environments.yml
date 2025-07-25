@@ -20,7 +20,7 @@
   pre_tasks:
     - name: Ensure user.max_user_namespaces is set high enough
       become: true
-      ansible.builtin.sysctl:
+      ansible.posix.sysctl:
         name: user.max_user_namespaces
         value: '28633'
         sysctl_set: yes
@@ -271,56 +271,5 @@
           }}
       loop: "{{ environment_list }}"
 
-    # Ensure user is allowed to use user namespaces (for rootless Podman)
-    - name: Ensure user.max_user_namespaces is set high enough
-      become: true
-      ansible.builtin.sysctl:
-        name: user.max_user_namespaces
-        value: '28633'
-        sysctl_set: yes
-        state: present
-        reload: yes
-      failed_when: false
 
-    - name: Detect if running in Automation Platform WebUI
-      set_fact:
-        running_in_webui: "{{ (ansible_env.AWX_TASK_ID is defined) or (ansible_env.ANSIBLE_CONTROLLER_HOST is defined) }}"
-
-    - name: Prompt for Red Hat credentials token
-      ansible.builtin.vars_prompt:
-        name: rh_credentials_token
-        prompt: "Enter your Red Hat Automation Hub token"
-        private: yes
-      when: not running_in_webui
-
-    - name: Prompt for Red Hat CDN username
-      ansible.builtin.vars_prompt:
-        name: redhat_cdn_username
-        prompt: "Enter your Red Hat CDN username"
-        private: no
-      when: not running_in_webui
-
-    - name: Prompt for Red Hat CDN password
-      ansible.builtin.vars_prompt:
-        name: redhat_cdn_password
-        prompt: "Enter your Red Hat CDN password"
-        private: yes
-      when: not running_in_webui
-
-    - name: Ensure ~/.ansible/conf directory exists
-      ansible.builtin.file:
-        path: "{{ lookup('env', 'HOME') }}/.ansible/conf"
-        state: directory
-        mode: '0700'
-      when: not running_in_webui
-
-    - name: Write secrets to ~/.ansible/conf/env.conf
-      ansible.builtin.copy:
-        dest: "{{ lookup('env', 'HOME') }}/.ansible/conf/env.conf"
-        content: |
-          RH_CREDENTIALS_TOKEN={{ rh_credentials_token }}
-          REDHAT_CDN_USERNAME={{ redhat_cdn_username }}
-          REDHAT_CDN_PASSWORD={{ redhat_cdn_password }}
-        mode: '0600'
-      when: not running_in_webui
 
