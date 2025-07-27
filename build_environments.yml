@@ -1,54 +1,155 @@
 ---
-- name: Build Execution Environments
+- name: Ensure Python 3.12 and Ansible 10+ are installed
+  hosts: localhost
+  become: true
+  gather_facts: false
+
+  pre_tasks:
+    - name: Ensure newuidmap and newgidmap are setuid root
+      ansible.builtin.file:
+        path: "{{ item }}"
+        mode: '4755'
+        owner: root
+        group: root
+      loop:
+        - /usr/bin/newuidmap
+        - /usr/bin/newgidmap
+
+    - name: Ensure /etc/subuid entry exists for user
+      ansible.builtin.lineinfile:
+        path: /etc/subuid
+        line: "{{ lookup('env','USER') }}:100000:65536"
+        create: yes
+        state: present
+
+    - name: Ensure /etc/subgid entry exists for user
+      ansible.builtin.lineinfile:
+        path: /etc/subgid
+        line: "{{ lookup('env','USER') }}:100000:65536"
+        create: yes
+        state: present
+
+  tasks:
+    - name: Install Python 3.12 and development tools
+      ansible.builtin.package:
+        name:
+          - python3.12
+          - python3.12-devel
+          - python3.12-pip
+          - gcc
+          - libffi-devel
+          - openssl-devel
+        state: present
+
+    - name: Ensure python3.12 is available in PATH
+      ansible.builtin.command: which python3.12
+      register: python312_path
+      changed_when: false
+      failed_when: python312_path.rc != 0
+
+    - name: Remove any existing alias for python in ~/.bashrc
+      ansible.builtin.lineinfile:
+        path: "{{ lookup('env','HOME') }}/.bashrc"
+        regexp: '^alias python='
+        state: absent
+
+    - name: Add alias for python to python3.12 in ~/.bashrc
+      ansible.builtin.lineinfile:
+        path: "{{ lookup('env','HOME') }}/.bashrc"
+        line: "alias python=python3.12"
+        insertafter: EOF
+
+    - name: Show python3.12 version
+      ansible.builtin.command: python3.12 --version
+      register: python312_version
+      changed_when: false
+
+    - name: Ensure pip for Python 3.12 is upgraded
+      ansible.builtin.shell: |
+        python3.12 -m pip install --upgrade  --ignore-installed --user pip setuptools wheel jmespath
+      args:
+        executable: /bin/bash
+
+    - name: Uninstall old Ansible if present (optional, safe)
+      ansible.builtin.shell: |
+        python3.12 -m pip uninstall -y ansible || true
+      args:
+        executable: /bin/bash
+      ignore_errors: true
+
+    - name: Install Ansible (user install) for Python 3.12
+      ansible.builtin.shell: |
+        python3.12 -m pip install --upgrade --ignore-installed --user ansible
+      args:
+        executable: /bin/bash
+
+    - name: Show python3.12 version (system-wide)
+      ansible.builtin.command: python3.12 --version
+      changed_when: false
+
+- name: Load secrets and prompt if not set
   hosts: localhost
   gather_facts: false
   vars:
     environments_dir: "{{ playbook_dir }}/environments"
-
-  vars_prompt:
-    - name: rh_credentials_token
-      prompt: "Enter your Red Hat Automation Hub token"
-      private: yes
-    - name: redhat_cdn_username
-      prompt: "Enter your Red Hat CDN username"
-      private: no
-    - name: redhat_cdn_password
-      prompt: "Enter your Red Hat CDN password"
-      private: yes
-
-  pre_tasks:
-    - name: Ensure user.max_user_namespaces is set high enough
-      become: true
-      ansible.posix.sysctl:
-        name: user.max_user_namespaces
-        value: '28633'
-        sysctl_set: yes
-        state: present
-        reload: yes
-      failed_when: false
-
-    - name: Detect if running in Automation Platform WebUI
-      set_fact:
-        running_in_webui: "{{ (ansible_env.AWX_TASK_ID is defined) or (ansible_env.ANSIBLE_CONTROLLER_HOST is defined) }}"
-
-    - name: Ensure ~/.ansible/conf directory exists
-      ansible.builtin.file:
-        path: "{{ lookup('env', 'HOME') }}/.ansible/conf"
-        state: directory
-        mode: '0700'
-      when: not running_in_webui
-
-    - name: Write secrets to ~/.ansible/conf/env.conf
-      ansible.builtin.copy:
-        dest: "{{ lookup('env', 'HOME') }}/.ansible/conf/env.conf"
-        content: |
-          RH_CREDENTIALS_TOKEN={{ rh_credentials_token }}
-          REDHAT_CDN_USERNAME={{ redhat_cdn_username }}
-          REDHAT_CDN_PASSWORD={{ redhat_cdn_password }}
-        mode: '0600'
-      when: not running_in_webui
-
   tasks:
+    - name: Set env_conf_path variable
+      set_fact:
+        env_conf_path: "{{ lookup('env', 'HOME') }}/.ansible/conf/env.conf"
+
+    - name: Check if ~/.ansible/conf/env.conf exists
+      ansible.builtin.stat:
+        path: "{{ env_conf_path }}"
+      register: env_conf_stat
+
+    - name: Read and parse ~/.ansible/conf/env.conf if it exists
+      ansible.builtin.slurp:
+        src: "{{ env_conf_path }}"
+      register: env_conf_slurp
+      when: env_conf_stat.stat.exists
+
+    - name: Set secrets from env.conf if available
+      set_fact:
+        rh_credentials_token: "{{ (env_conf_slurp.content | b64decode).splitlines() | select('match', '^RH_CREDENTIALS_TOKEN=') | map('regex_replace', '^RH_CREDENTIALS_TOKEN=(.*)', '\\1') | list | first | default('') }}"
+        redhat_cdn_username: "{{ (env_conf_slurp.content | b64decode).splitlines() | select('match', '^REDHAT_CDN_USERNAME=') | map('regex_replace', '^REDHAT_CDN_USERNAME=(.*)', '\\1') | list | first | default('') }}"
+        redhat_cdn_password: "{{ (env_conf_slurp.content | b64decode).splitlines() | select('match', '^REDHAT_CDN_PASSWORD=') | map('regex_replace', '^REDHAT_CDN_PASSWORD=(.*)', '\\1') | list | first | default('') }}"
+      when: env_conf_slurp is defined
+
+    - name: Prompt for RH_CREDENTIALS_TOKEN if not set
+      ansible.builtin.pause:
+        prompt: "Enter your Red Hat Automation Hub token"
+        echo: no
+      register: prompt_rh_token
+      when: rh_credentials_token is not defined or rh_credentials_token == ""
+
+    - name: Set RH_CREDENTIALS_TOKEN from prompt
+      set_fact:
+        rh_credentials_token: "{{ prompt_rh_token.user_input }}"
+      when: rh_credentials_token is not defined or rh_credentials_token == ""
+
+    - name: Prompt for REDHAT_CDN_USERNAME if not set
+      ansible.builtin.pause:
+        prompt: "Enter your Red Hat CDN username"
+      register: prompt_rh_user
+      when: redhat_cdn_username is not defined or redhat_cdn_username == ""
+
+    - name: Set REDHAT_CDN_USERNAME from prompt
+      set_fact:
+        redhat_cdn_username: "{{ prompt_rh_user.user_input }}"
+      when: redhat_cdn_username is not defined or redhat_cdn_username == ""
+
+    - name: Prompt for REDHAT_CDN_PASSWORD if not set
+      ansible.builtin.pause:
+        prompt: "Enter your Red Hat CDN password"
+        echo: no
+      register: prompt_rh_pass
+      when: redhat_cdn_password is not defined or redhat_cdn_password == ""
+
+    - name: Set REDHAT_CDN_PASSWORD from prompt
+      set_fact:
+        redhat_cdn_password: "{{ prompt_rh_pass.user_input }}"
+      when: redhat_cdn_password is not defined or redhat_cdn_password == ""
+
     # --- Environment Discovery and Validation ---
     - name: Find all available environments
       ansible.builtin.find:
@@ -59,7 +160,16 @@
 
     - name: Set environment list - Auto-discover all environments
       ansible.builtin.set_fact:
-        environment_list: "{{ all_environments.files | map(attribute='path') | map('basename') | list | sort }}"
+        environment_list: >-
+          {{
+            all_environments.files
+            | map(attribute='path')
+            | map('basename')
+            | reject('match', '^ee-build-base_environment_definition_1-file$')
+            | reject('match', '^ee-build-base_environment_definition_4-file$')
+            | list
+            | sort
+          }}
 
     - name: Debug discovered environment list
       ansible.builtin.debug:
@@ -179,7 +289,41 @@
           }}
       loop: "{{ environment_list }}"
 
+    - name: Define Red Hat registries to try
+      set_fact:
+        rh_registries:
+          - registry.access.redhat.com
+          - registry.redhat.io
+          - registry.connect.redhat.com
+
+    - name: Try login to Red Hat registries until one works
+      become: true
+      ansible.builtin.shell: |
+        podman login --get-login {{ item }} 2>/dev/null || \
+        podman login {{ item }} --username {{ redhat_cdn_username }} --password {{ redhat_cdn_password }}
+      register: podman_login_result
+      failed_when: false
+      no_log: true
+      loop: "{{ rh_registries }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Set which registry was used
+      set_fact:
+        rh_registry_logged_in: "{{ podman_login_result.results | selectattr('rc', 'equalto', 0) | map(attribute='item') | first }}"
+      when: podman_login_result.results | selectattr('rc', 'equalto', 0) | list | length > 0
+
+    - name: Fail if login to all registries failed
+      ansible.builtin.fail:
+        msg: "Could not log in to any Red Hat registry!"
+      when: rh_registry_logged_in is not defined
+
+    - name: Debug which registry was used
+      ansible.builtin.debug:
+        msg: "Logged in to Red Hat registry: {{ rh_registry_logged_in }}"
+
     - name: Build execution environments in /tmp
+      become: true
       ansible.builtin.shell: |
         ansible-builder build \
           --prune \
@@ -269,6 +413,13 @@
             )
           }}
       loop: "{{ environment_list }}"
+
+    - name: Show podman login results for all registries
+      ansible.builtin.debug:
+        var: podman_login_result
+
+
+
 
 
 

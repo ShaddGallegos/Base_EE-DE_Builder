@@ -1,5 +1,0 @@
-gcc
-make
-pkg-config
-python3-devel
-shadow-utils
