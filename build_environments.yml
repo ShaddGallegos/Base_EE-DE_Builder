@@ -1,7 +1,6 @@
 ---
 - name: Build Execution Environments
   hosts: localhost
-  connection: local
   gather_facts: false
   vars:
     environments_dir: "{{ playbook_dir }}/environments"
