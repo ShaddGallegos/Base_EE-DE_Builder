@@ -1,8 +1,0 @@
-# Original requirements file filtered to remove problematic packages
-# The following packages are excluded: boto3, botocore, s3transfer
-# These packages are already installed via RPM in the base image
-
-# Original requirements file filtered to remove problematic packages
-# These packages are already installed via RPM in the base image
-
-# Auto-generated empty requirements.txt

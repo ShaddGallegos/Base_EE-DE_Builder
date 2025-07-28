@@ -22,11 +22,11 @@ options:
 
 additional_build_steps:
   prepend_builder: |
-    RUN microdnf install -y python3.11 python3.11-pip python3.11-devel python3.11-pyyaml 
+    RUN microdnf install -y python3.11 python3.11-pip python3.11-devel python3.11-pyyaml
 
   prepend_final: |
     RUN microdnf upgrade -y \
-        && python3 -m pip install --no-cache-dir --upgrade --ignore-installed pip setuptools wheel jmespath six
+        && python3.11 -m pip install --no-cache-dir --upgrade --ignore-installed pip setuptools wheel jmespath six
 
   append_final: |
     USER root

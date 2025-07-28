@@ -22,7 +22,7 @@ options:
 
 additional_build_steps:
   prepend_builder: |
-    RUN microdnf install -y python3.11 python3.11-pip python3.11-devel python3.11-pyyaml 
+    RUN microdnf install -y python3.11 python3.11-pip python3.11-pyyaml 
 
   prepend_final: |
     # Install Chrome dependencies

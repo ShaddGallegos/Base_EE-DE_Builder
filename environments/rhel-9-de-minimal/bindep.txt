@@ -1,0 +1,8 @@
+gcc
+make
+pkgconfig
+python3.11-devel
+rsync
+systemd-devel
+rsync
+systemd-devel
