@@ -30,7 +30,7 @@ setup:
 		echo "✅ Created Python virtual environment"; \
 	fi
 	@$(VENV_DIR)/bin/pip install --upgrade pip
-	@$(VENV_DIR)/bin/pip install -r requirements.txt
+	@$(VENV_DIR)/bin/pip install -r $(CURDIR)/requirements.txt
 	@echo "✅ Installed Python dependencies inside virtualenv"
 	@cd $(FRONTEND_DIR) && npm install
 	@echo "✅ Installed Node.js dependencies"
