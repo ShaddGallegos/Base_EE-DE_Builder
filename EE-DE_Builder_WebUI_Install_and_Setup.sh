@@ -173,6 +173,7 @@ fi
 # 17. Install launchers and desktop integration
 log "Installing launchers and desktop integration..."
 
+
 # Get current working directory (should be the project root)
 PROJECT_ROOT="$(pwd)"
 LAUNCHERS_DIR="$PROJECT_ROOT/Launchers"
