@@ -33,4 +33,4 @@ additional_build_steps:
     RUN microdnf clean all && \
         rm -rf /var/cache/{dnf,yum} && \
         rm -rf /etc/ansible/ansible.cfg 
-    RUN pip3 check || echo "Some packages have issues, but continuing the build"
+    RUN pip check || echo "Some packages have issues, but continuing the build"

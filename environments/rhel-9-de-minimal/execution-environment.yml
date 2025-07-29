@@ -33,7 +33,11 @@ additional_build_steps:
 
   prepend_final: |
     RUN microdnf upgrade -y \
-        && python3.11 -m pip install --no-cache-dir --upgrade --ignore-installed pip setuptools wheel jmespath six
+        && export PKG_CONFIG_PATH=/usr/lib64/pkgconfig \
+        && python3.11 -m pip install --no-cache-dir --upgrade --ignore-installed pip setuptools wheel jmespath six \
+        && python3.11 -m pip install --no-cache-dir --upgrade --ignore-installed ansible ansible-runner \
+        && python3 -m pip install --no-cache-dir --upgrade --ignore-installed pip setuptools wheel jmespath six \
+        && python3 -m pip install --no-cache-dir --upgrade --ignore-installed ansible ansible-runner
 
   append_final: |
     USER root

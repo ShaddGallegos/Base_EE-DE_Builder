@@ -47,22 +47,22 @@
         state: present
 
   tasks:
-    - name: Install Python 3.12 and development tools
+    - name: Install Python 3.11 and development tools
       ansible.builtin.package:
         name:
-          - python3.12
-          - python3.12-devel
-          - python3.12-pip
+          - python3.11
+          - python3.11-devel
+          - python3.11-pip
           - gcc
           - libffi-devel
           - openssl-devel
         state: present
 
-    - name: Ensure python3.12 is available in PATH
-      ansible.builtin.command: which python3.12
-      register: python312_path
+    - name: Ensure python3.11 is available in PATH
+      ansible.builtin.command: which python3.11
+      register: python311_path
       changed_when: false
-      failed_when: python312_path.rc != 0
+      failed_when: python311_path.rc != 0
 
     - name: Remove any existing alias for python in ~/.bashrc
       ansible.builtin.lineinfile:
@@ -70,38 +70,38 @@
         regexp: '^alias python='
         state: absent
 
-    - name: Add alias for python to python3.12 in ~/.bashrc
+    - name: Add alias for python to python3.11 in ~/.bashrc
       ansible.builtin.lineinfile:
         path: "{{ lookup('env','HOME') }}/.bashrc"
-        line: "alias python=python3.12"
+        line: "alias python=python3.11"
         insertafter: EOF
 
-    - name: Show python3.12 version
-      ansible.builtin.command: python3.12 --version
-      register: python312_version
+    - name: Show python3.11 version
+      ansible.builtin.command: python3.11 --version
+      register: python311_version
       changed_when: false
 
-    - name: Ensure pip for Python 3.12 is upgraded
+    - name: Ensure pip for Python 3.11 is upgraded
       ansible.builtin.shell: |
-        python3.12 -m pip install --upgrade  --ignore-installed --user pip setuptools wheel jmespath
+        python3.11 -m pip install --upgrade  --ignore-installed --user pip setuptools wheel jmespath
       args:
         executable: /bin/bash
 
     - name: Uninstall old Ansible if present (optional, safe)
       ansible.builtin.shell: |
-        python3.12 -m pip uninstall -y ansible || true
+        python3.11 -m pip uninstall -y ansible || true
       args:
         executable: /bin/bash
       ignore_errors: true
 
-    - name: Install Ansible (user install) for Python 3.12
+    - name: Install Ansible (user install) for Python 3.11
       ansible.builtin.shell: |
-        python3.12 -m pip install --upgrade --ignore-installed --user ansible
+        python3.11 -m pip install --upgrade --ignore-installed --user ansible
       args:
         executable: /bin/bash
 
-    - name: Show python3.12 version (system-wide)
-      ansible.builtin.command: python3.12 --version
+    - name: Show python3.11 version (system-wide)
+      ansible.builtin.command: python3.11 --version
       changed_when: false
 
 - name: Load secrets and prompt if not set
