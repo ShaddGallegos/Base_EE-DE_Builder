@@ -1,3 +1,63 @@
+# Base_EE-DE_Builder
+
+A robust Ansible-based automation project for building, managing, and customizing Red Hat Execution Environments (EEs) and development environments. This project is designed to streamline the process of preparing, configuring, and building containerized Ansible execution environments for RHEL-based systems.
+
+## Features
+- Automated installation and configuration of Python and Ansible (including version pinning and user-level installs)
+- Secure handling of Red Hat credentials and secrets
+- Interactive menu for selecting and building multiple RHEL environment definitions
+- Automated build context preparation and cleanup
+- Intelligent build skipping based on configuration checksums
+- Registry login and fallback logic for container builds
+- Detailed logging and error handling for troubleshooting
+
+## Directory Structure
+- `build_environments.yml` — Main Ansible playbook for environment build automation
+- `environments/` — Contains subdirectories for each RHEL EE/development environment definition
+- `templates/` — Jinja2 templates for configuration files (e.g., `ansible.cfg.j2`)
+- `Launchers/` — Scripts and desktop launchers for the Web UI
+- `frontend/` — (If present) Web UI frontend code (TypeScript/React)
+- `backend/` — (If present) Web UI backend code (Python/FastAPI)
+- `scripts/` — Utility scripts for desktop integration
+
+## Usage
+1. **Clone the repository:**
+   ```bash
+   git clone <repo-url>
+   cd Base_EE-DE_Builder
+   ```
+2. **Review and edit environment definitions:**
+   - Add or modify directories under `environments/` for each RHEL EE you wish to build.
+   - Ensure each environment has an `execution-environment.yml` file.
+3. **Run the main playbook:**
+   ```bash
+   ansible-playbook build_environments.yml
+   ```
+   - You will be prompted for Red Hat credentials if not already configured.
+   - Select one or more environments to build from the interactive menu.
+4. **Check build logs:**
+   - Logs are available in `/var/log/ansible-builder.log` and `/tmp/ee-build-<env>/build.log`.
+
+## Prerequisites
+- Ansible (installed via the playbook if not present)
+- Python 3.11+
+- Podman (or Docker, if configured)
+- Sufficient permissions to install packages and manage containers
+
+## Security
+- Secrets are loaded from `~/.ansible/conf/env.conf` or prompted interactively.
+- No secrets are stored in logs or output.
+
+## Troubleshooting
+- Review the build logs for errors or failed builds.
+- If user namespace errors occur, the playbook will attempt a fallback build with `sudo`.
+- Ensure your user is configured in `/etc/subuid` and `/etc/subgid` for rootless container builds.
+
+## License
+This project is provided under the MIT License. See `LICENSE` for details.
+
+## Authors
+- Maintained by shaddgallegos and contributors.
 # EE-DE Builder - Ansible Environment Builder Web Application
 
 A full-stack web application for building and managing Ansible Execution
