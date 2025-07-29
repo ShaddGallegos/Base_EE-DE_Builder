@@ -62,12 +62,12 @@ if ! sudo dnf repolist &>/dev/null; then
 fi
 log "DNF repos reachable."
 
-# 7. Firewall: open port 3000 if firewalld is active
+# 7. Firewall: open port 3000 on all interfaces (0.0.0.0) if firewalld is active
 if command -v firewall-cmd &>/dev/null && sudo systemctl is-active firewalld &>/dev/null; then
-  log "firewalld is active; opening port 3000/tcp..."
-  sudo firewall-cmd --add-port=3000/tcp --permanent
+  log "firewalld is active; opening port 3000/tcp on 0.0.0.0..."
+  sudo firewall-cmd --add-port=3000/tcp --permanent --zone=public
   sudo firewall-cmd --reload
-  log "Port 3000 opened."
+  log "Port 3000/tcp opened on all interfaces (0.0.0.0)."
 else
   log "firewalld not active or not installed."
 fi
@@ -158,17 +158,16 @@ pip3 install --upgrade pip wheel setuptools
 #make setup && make dev \
 #  || fail "make setup/dev failed."
 
-# 16. Run UI build as root (prompt for sudo creds)
-log "Running UI build as root; you will be prompted for your sudo password"
+# 16. Run UI build as the current user (not root)
+log "Running UI build as user $USER (not root) on 0.0.0.0:3000"
 
-# Invalidate any existing sudo timestamp so we always get a fresh prompt
-sudo -k
+# Ensure we are in the project root
+cd "$PROJECT_ROOT"
 
-# Execute make under a root shell
-if sudo bash -c "make setup && make dev"; then
-  log "UI build completed successfully as root."
+if make setup && make dev; then
+  log "UI build completed successfully as user."
 else
-  fail "UI build failed under root."
+  fail "UI build failed as user."
 fi
 
 # 17. Install launchers and desktop integration
