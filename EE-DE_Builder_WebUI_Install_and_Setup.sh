@@ -6,6 +6,11 @@
 
 set -euo pipefail
 
+
+# Get current working directory (should be the project root)
+PROJECT_ROOT="$(pwd)"
+LAUNCHERS_DIR="$PROJECT_ROOT/Launchers"
+
 LOG="/var/log/EE-DE_Builder_WebUI.log"
 
 # Ensure log file exists and is writable by this user
