@@ -3,7 +3,7 @@ version: 3
 
 images:
   base_image:
-    name: 'registry.redhat.io/ansible-automation-25/ansible-dev-tools-rhel8:latest'
+    name: 'registry.redhat.io/ansible-automation-platform-25/ansible-dev-tools-rhel8:25.5.2-4'
     options:
       pull_policy: missing
       tls_verify: false
@@ -22,22 +22,23 @@ options:
 
 additional_build_steps:
   prepend_builder: |
-    RUN microdnf install -y python3.11 python3.11-pip python3.11-pyyaml 
+    RUN microdnf install -y python3.11 python3.11-pip python3.11-pyyaml \
+        && python3.11 -m pip install --upgrade pip setuptools wheel
 
   prepend_final: |
     # Install Chrome dependencies
     RUN microdnf install -y liberation-fonts libappindicator-gtk3 liberation-sans-fonts \
-                            liberation-serif-fonts xdg-utils libXScrnSaver libX11 \
-                            mesa-libGLU redhat-lsb
+        liberation-serif-fonts xdg-utils libXScrnSaver libX11 \
+        mesa-libGLU redhat-lsb
 
-    # Download and install Chrome
-    RUN curl -sSLO https://dl.google.com/linux/direct/google-chrome-stable_current_x86_64.rpm && \
-        microdnf install -y google-chrome-stable_current_x86_64.rpm && \
+    # Download and install Chrome (use rpm -i for local RPM)
+    RUN curl -fSLO https://dl.google.com/linux/direct/google-chrome-stable_current_x86_64.rpm && \
+        rpm -i --nodeps google-chrome-stable_current_x86_64.rpm && \
         rm -f google-chrome-stable_current_x86_64.rpm
 
     # Standard upgrade steps
-    RUN microdnf upgrade -y \
-        && python3 -m pip install --no-cache-dir --upgrade --ignore-installed pip setuptools wheel jmespath six
+    RUN python3.11 -m pip install --upgrade pip setuptools wheel jmespath six \
+        && microdnf upgrade -y
 
   append_final: |
     USER root
