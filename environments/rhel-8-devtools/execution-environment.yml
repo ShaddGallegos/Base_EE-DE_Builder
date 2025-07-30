@@ -22,6 +22,8 @@ options:
 
 additional_build_steps:
   prepend_builder: |
+    # Remove openshift-clients from bindep.txt if present (prevents build failure)
+    RUN sed -i '/^openshift-clients/d' bindep.txt || true
     RUN microdnf install -y python3.11 python3.11-pip python3.11-pyyaml \
         && python3.11 -m pip install --upgrade pip setuptools wheel
 
@@ -35,6 +37,10 @@ additional_build_steps:
     RUN curl -fSLO https://dl.google.com/linux/direct/google-chrome-stable_current_x86_64.rpm && \
         rpm -i --nodeps google-chrome-stable_current_x86_64.rpm && \
         rm -f google-chrome-stable_current_x86_64.rpm
+
+    # Install OpenShift CLI manually (oc and kubectl)
+    RUN curl -L https://mirror.openshift.com/pub/openshift-v4/clients/ocp/latest/openshift-client-linux.tar.gz | tar -xz -C /usr/local/bin && \
+        chmod +x /usr/local/bin/oc /usr/local/bin/kubectl
 
     # Standard upgrade steps
     RUN python3.11 -m pip install --upgrade pip setuptools wheel jmespath six \
