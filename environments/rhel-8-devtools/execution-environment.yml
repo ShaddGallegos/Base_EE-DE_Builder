@@ -22,10 +22,12 @@ options:
 
 additional_build_steps:
   prepend_builder: |
-    # Remove openshift-clients from bindep.txt if present (prevents build failure)
-    RUN sed -i '/^openshift-clients/d' bindep.txt || true
     RUN microdnf install -y python3.11 python3.11-pip python3.11-pyyaml \
         && python3.11 -m pip install --upgrade pip setuptools wheel
+
+  append_builder: |
+    # Remove openshift-clients from generated bindep.txt before package install
+    RUN sed -i '/^openshift-clients/d' bindep.txt || true
 
   prepend_final: |
     # Install Chrome dependencies
