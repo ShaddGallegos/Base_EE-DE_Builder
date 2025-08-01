@@ -181,9 +181,6 @@
       set_fact:
         rhel_dirs: "{{ found_rhel_dirs.files | selectattr('path', 'search', 'rhel') | list | sort(attribute='path') }}"
 
-
-
-
     - name: Build menu options as a list of lines (for vertical display)
       vars:
         menu_lines: |
@@ -221,10 +218,6 @@
         msg: |
           mapped_int: {{ user_selection.user_input.replace(' ', '').split(',') | map('int') | list }}
           type: {{ user_selection.user_input.replace(' ', '').split(',') | map('int') | list | type_debug }}
-
-
-
-
 
     - name: Debug user_selection.user_input and its type before set_fact
       ansible.builtin.debug:
@@ -342,8 +335,6 @@
       loop: "{{ environment_list }}"
       loop_control:
         label: "{{ item }}"
-
-
 
     - name: Debug checksum comparison for each environment
       ansible.builtin.debug:
