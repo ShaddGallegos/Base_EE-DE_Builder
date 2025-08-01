@@ -15,6 +15,7 @@
         owner: root
         group: root
         mode: '0644'
+
     - name: Truncate /var/log/ansible-builder.log at start of run
       ansible.builtin.copy:
         dest: /var/log/ansible-builder.log
@@ -22,6 +23,7 @@
         owner: root
         group: root
         mode: '0644'
+
     - name: Ensure newuidmap and newgidmap are setuid root
       ansible.builtin.file:
         path: "{{ item }}"
@@ -31,6 +33,17 @@
       loop:
         - /usr/bin/newuidmap
         - /usr/bin/newgidmap
+
+    - name: Enable required RHEL 9 and AAP repositories
+      ansible.builtin.shell: |
+        subscription-manager repos --enable=ansible-automation-platform-2.5-for-rhel-9-x86_64-rpms \
+                                  --enable=codeready-builder-for-rhel-9-x86_64-rpms \
+                                  --enable=rhel-9-for-x86_64-appstream-rpms \
+                                  --enable=rhel-9-for-x86_64-baseos-rpms \
+                                  --enable=rhel-9-for-x86_64-supplementary-rpms
+      register: enable_repos_result
+      changed_when: "'enabled' in enable_repos_result.stdout or 'The repository has been enabled' in enable_repos_result.stdout"
+      failed_when: false
 
     - name: Ensure /etc/subuid entry exists for user
       ansible.builtin.lineinfile:
@@ -54,6 +67,7 @@
           - python3.11-devel
           - python3.11-pip
           - gcc
+          - make
           - libffi-devel
           - openssl-devel
         state: present
@@ -181,6 +195,9 @@
       set_fact:
         rhel_dirs: "{{ found_rhel_dirs.files | selectattr('path', 'search', 'rhel') | list | sort(attribute='path') }}"
 
+
+
+
     - name: Build menu options as a list of lines (for vertical display)
       vars:
         menu_lines: |
@@ -218,6 +235,10 @@
         msg: |
           mapped_int: {{ user_selection.user_input.replace(' ', '').split(',') | map('int') | list }}
           type: {{ user_selection.user_input.replace(' ', '').split(',') | map('int') | list | type_debug }}
+
+
+
+
 
     - name: Debug user_selection.user_input and its type before set_fact
       ansible.builtin.debug:
@@ -335,6 +356,8 @@
       loop: "{{ environment_list }}"
       loop_control:
         label: "{{ item }}"
+
+
 
     - name: Debug checksum comparison for each environment
       ansible.builtin.debug:
@@ -497,3 +520,39 @@
         executable: /bin/bash
       changed_when: false
       failed_when: false
+
+    - name: Collect build results for report
+      set_fact:
+        build_report: >-
+          {{
+            (build_report | default({}))
+            | combine({
+                item: {
+                  'built': (
+                    (
+                      ee_yml_stat.results
+                        | selectattr('item', 'equalto', item)
+                        | map(attribute='stat.checksum')
+                        | first | default('')
+                    ) != (
+                      last_build_checksum_stat.results
+                        | selectattr('item', 'equalto', item)
+                        | map(attribute='stat.checksum')
+                        | first | default('')
+                    )
+                  ),
+                  'log': "/tmp/ee-build-{{ item }}/build.log"
+                }
+              })
+          }}
+      loop: "{{ environment_list }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Show build summary report
+      ansible.builtin.debug:
+        msg: |
+          Build Summary:
+          {% for env, result in build_report.items() %}
+            - {{ env }}: {% if result.built %}UPDATED/CREATED{% else %}SKIPPED (no changes){% endif %} (log: {{ result.log }})
+          {% endfor %}

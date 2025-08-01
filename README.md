@@ -1,6 +1,44 @@
 # Base_EE-DE_Builder
 
+## Table of Contents
+
+- [Prerequisites](#prerequisites)
+- [Features](#features)
+- [Directory Structure](#directory-structure)
+- [Usage](#usage)
+  - [Running the CLI](#running-the-cli)
+  - [Customizing for Vendor Products](#customizing-for-vendor-products)
+  - [Additional Steps](#additional-steps)
+- [Security](#security)
+- [Troubleshooting](#troubleshooting)
+- [License](#license)
+- [Authors](#authors)
+- [EE-DE Builder - Ansible Environment Builder Web Application](#ee-de-builder---ansible-environment-builder-web-application)
+  - [Features (Web UI)](#features-web-ui)
+  - [Architecture](#architecture)
+  - [Technology Stack](#technology-stack)
+  - [Prerequisites (Web UI)](#prerequisites-web-ui)
+  - [Quick Start](#quick-start)
+  - [Available Make Commands](#available-make-commands)
+  - [Installation Scripts](#installation-scripts)
+  - [Configuration](#configuration)
+  - [API Documentation](#api-documentation)
+  - [Environment Definitions](#environment-definitions)
+  - [Container Building](#container-building)
+  - [Security (Web UI)](#security-web-ui)
+  - [Development](#development)
+  - [Troubleshooting (Web UI)](#troubleshooting-web-ui)
+  - [Contributing](#contributing)
+  - [License (Web UI)](#license-web-ui)
+  - [Support](#support)
+
 A robust Ansible-based automation project for building, managing, and customizing Red Hat Execution Environments (EEs) and development environments. This project is designed to streamline the process of preparing, configuring, and building containerized Ansible execution environments for RHEL-based systems.
+
+## Prerequisites
+- Ansible (installed via the playbook if not present)
+- Python 3.11+
+- Podman (or Docker, if configured)
+- Sufficient permissions to install packages and manage containers
 
 ## Features
 - Automated installation and configuration of Python and Ansible (including version pinning and user-level installs)
@@ -21,21 +59,60 @@ A robust Ansible-based automation project for building, managing, and customizin
 - `scripts/` — Utility scripts for desktop integration
 
 ## Usage
-1. **Clone the repository:**
-   ```bash
-   git clone <repo-url>
-   cd Base_EE-DE_Builder
+
+### Running the CLI
+
+To build environments using the CLI, run:
+```bash
+ansible-playbook build_environments.yml
+```
+
+- You will be prompted for Red Hat credentials if not already configured.
+- Select one or more environments to build from the interactive menu.
+
+### Running the Web UI
+
+After setup (see Quick Start or Installation Scripts below), you can launch the Web UI in several ways:
+
+- **From the command line:**
+  ```bash
+  ee-de-webui-app
+  ```
+  or
+  ```bash
+  ee-de-webui-gui
+  ```
+
+- **From the desktop:**  
+  Use the "Builder WebUI" desktop application or shortcut if installed.
+
+- **Directly in your browser:**  
+  Open [http://localhost:3000](http://localhost:3000) after starting the backend and frontend servers.
+
+See the [Quick Start](#quick-start) section for full setup and launch instructions.
+
+### Customizing for Vendor Products
+
+By default, this script updates the standard scripts that come with Ansible Automation Platform (AAP).  
+If you want to create your own custom scripts for other vendor products:
+
+1. **Copy the environment folder you want to work with from `environments/` and add `-vendor` to the end of the name.**  
+   For example, to create a VMware-compatible environment, copy:
    ```
+   cp -r environments/rhel-9-ee-minimal environments/rhel-9-ee-minimal-vmware
+   ```
+2. **Edit the new folder:**  
+   Open and modify `requirements.yml`, `requirements.txt`, and `bindep.txt` as needed to make it compatible with your vendor (e.g., VMware).
+
+This allows you to maintain both standard and vendor-specific execution environments side by side.
+
+### Additional Steps
+
 2. **Review and edit environment definitions:**
    - Add or modify directories under `environments/` for each RHEL EE you wish to build.
    - Ensure each environment has an `execution-environment.yml` file.
-3. **Run the main playbook:**
-   ```bash
-   ansible-playbook build_environments.yml
-   ```
-   - You will be prompted for Red Hat credentials if not already configured.
-   - Select one or more environments to build from the interactive menu.
-4. **Check build logs:**
+
+3. **Check build logs:**
    - Logs are available in `/var/log/ansible-builder.log` and `/tmp/ee-build-<env>/build.log`.
 
 ## Prerequisites
@@ -58,22 +135,21 @@ This project is provided under the MIT License. See `LICENSE` for details.
 
 ## Authors
 - Maintained by shaddgallegos and contributors.
+
 # EE-DE Builder - Ansible Environment Builder Web Application
 
-A full-stack web application for building and managing Ansible Execution
-Environments (EE) and Decision Environments (DE) with an intuitive user
-interface.
+A full-stack web application for building and managing Ansible Execution Environments (EE) and Decision Environments (DE) with an intuitive user interface.
 
-## 🚀 Features
+## Features (Web UI)
 
-- **Web-based Interface**: Modern React frontend with PatternFly UI components
-- **FastAPI Backend**: High-performance Python API with real-time build monitoring
-- **Container Building**: Automated Ansible Builder integration with Podman/Docker support
-- **Environment Management**: Create, configure, and deploy custom EE/DE containers
-- **Real-time Monitoring**: Live build status and log streaming
-- **AAP Integration**: Direct integration with Ansible Automation Platform
+- Web-based Interface: Modern React frontend with PatternFly UI components
+- FastAPI Backend: High-performance Python API with real-time build monitoring
+- Container Building: Automated Ansible Builder integration with Podman/Docker support
+- Environment Management: Create, configure, and deploy custom EE/DE containers
+- Real-time Monitoring: Live build status and log streaming
+- AAP Integration: Direct integration with Ansible Automation Platform
 
-## 🏗️ Architecture
+## Architecture
 
 ```
 ├── backend/           # FastAPI backend application
@@ -95,43 +171,43 @@ interface.
 └── Makefile          # Development automation
 ```
 
-## 🛠️ Technology Stack
+## Technology Stack
 
 ### Backend
-- **FastAPI**: Modern Python web framework
-- **Uvicorn**: ASGI server
-- **Pydantic**: Data validation and settings
-- **Ansible Builder**: Container building
-- **Python 3.9+**
+- FastAPI: Modern Python web framework
+- Uvicorn: ASGI server
+- Pydantic: Data validation and settings
+- Ansible Builder: Container building
+- Python 3.9+
 
 ### Frontend
-- **React 18**: Modern React with hooks
-- **TypeScript**: Type-safe JavaScript
-- **PatternFly**: Enterprise-grade UI components
-- **Axios**: HTTP client
-- **React Router**: Navigation
+- React 18: Modern React with hooks
+- TypeScript: Type-safe JavaScript
+- PatternFly: Enterprise-grade UI components
+- Axios: HTTP client
+- React Router: Navigation
 
-## 📋 Prerequisites
+## Prerequisites (Web UI)
 
-- **Python 3.9+**
-- **Node.js 18+** and **npm**
-- **Podman** or **Docker** (for container building)
-- **Ansible Builder** (installed via requirements.txt)
+- Python 3.9+
+- Node.js 18+ and npm
+- Podman or Docker (for container building)
+- Ansible Builder (installed via requirements.txt)
 
 ### Additional Requirements for Automated Setup
 
-- **Fedora or RHEL** operating system
-- **Sudo privileges** and membership in `wheel` group
-- **Internet connectivity** for package downloads
-- **Quay.io account** for container registry access
+- Fedora or RHEL operating system
+- Sudo privileges and membership in `wheel` group
+- Internet connectivity for package downloads
+- Quay.io account for container registry access
 
 ### GUI Requirements (Optional)
 
-- **Desktop environment** (GNOME, KDE, XFCE, etc.) for desktop shortcuts
-- **Python3-tkinter** for GUI launcher (installed automatically)
-- **X11 display** for graphical applications
+- Desktop environment (GNOME, KDE, XFCE, etc.) for desktop shortcuts
+- Python3-tkinter for GUI launcher (installed automatically)
+- X11 display for graphical applications
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Automated Setup (Recommended for Fedora/RHEL)
 
@@ -205,14 +281,14 @@ npm start
 
 </details>
 
-## 🖥️ Usage
+## Usage
 
 ### Desktop Applications
 
 After running the automated setup script, you can launch the application using:
 
 **GUI Desktop Application:**
-- **Builder WebUI**: Direct web interface launcher
+- Builder WebUI: Direct web interface launcher
 
 **Command Line Launchers:**
 ```bash
@@ -225,20 +301,20 @@ ee-de-webui-gui
 
 ### Web Interface
 
-1. **Access the Application**: Open http://localhost:3000
-2. **Dashboard**: View build status and environment overview
-3. **Create Environment**: Use the wizard to define new EE/DE containers
-4. **Monitor Builds**: Real-time build progress and logs
-5. **Manage Environments**: Deploy to Automation Hub and Controller
+1. Access the Application: Open http://localhost:3000
+2. Dashboard: View build status and environment overview
+3. Create Environment: Use the wizard to define new EE/DE containers
+4. Monitor Builds: Real-time build progress and logs
+5. Manage Environments: Deploy to Automation Hub and Controller
 
 ### Application Locations
 
-- **User Applications**: `~/.local/share/applications/`
-- **Desktop Shortcuts**: `~/Desktop/` (if Desktop directory exists)
-- **System Applications**: `/usr/share/applications/`
-- **Command Line**: `~/.local/bin/` (added to PATH)
+- User Applications: `~/.local/share/applications/`
+- Desktop Shortcuts: `~/Desktop/` (if Desktop directory exists)
+- System Applications: `/usr/share/applications/`
+- Command Line: `~/.local/bin/` (added to PATH)
 
-## 🔧 Available Make Commands
+## Available Make Commands
 
 ```bash
 make setup          # Complete project setup
@@ -253,7 +329,7 @@ make build           # Build for production
 make help            # Show available commands
 ```
 
-## 🚀 Installation Scripts
+## Installation Scripts
 
 ### Automated Setup Script
 
@@ -279,7 +355,7 @@ The `EE-DE_Builder_WebUI_Install_and_Setup.sh` script provides a complete automa
 - Installs system-wide applications to `/usr/share/applications/`
 - Updates desktop databases automatically
 
-## ⚙️ Configuration
+## Configuration
 
 ### Backend Configuration
 
@@ -309,13 +385,13 @@ PLAYBOOK_PATH=../build_environments.yml
 
 The frontend automatically proxies API requests to `http://localhost:8000` during development.
 
-## 🔗 API Documentation
+## API Documentation
 
 When the backend is running, access the interactive API documentation:
-- **Swagger UI**: http://localhost:8000/docs
-- **ReDoc**: http://localhost:8000/redoc
+- Swagger UI: http://localhost:8000/docs
+- ReDoc: http://localhost:8000/redoc
 
-## 📁 Environment Definitions
+## Environment Definitions
 
 Place your Ansible Builder environment definitions in the `environments/` directory:
 
@@ -336,38 +412,38 @@ additional_build_steps:
     - RUN echo "Build complete"
 ```
 
-## 🐳 Container Building
+## Container Building
 
 The application supports both Podman and Docker for container building:
 
-- **Podman** (default): Rootless container building
-- **Docker**: Traditional container building (requires Docker daemon)
+- Podman (default): Rootless container building
+- Docker: Traditional container building (requires Docker daemon)
 
 Set your preference in the configuration or environment variables.
 
-## 🔒 Security
+## Security (Web UI)
 
-- **CORS**: Configured for local development
-- **Input Validation**: Pydantic models ensure data integrity
-- **Container Security**: Follows Ansible Builder security practices
+- CORS: Configured for local development
+- Input Validation: Pydantic models ensure data integrity
+- Container Security: Follows Ansible Builder security practices
 
-## 🧪 Development
+## Development
 
 ### Project Structure Guidelines
 
-- **Backend**: Follow FastAPI best practices with dependency injection
-- **Frontend**: Use TypeScript and functional components with hooks
-- **API**: RESTful design with proper HTTP status codes
-- **Error Handling**: Comprehensive error handling on both ends
+- Backend: Follow FastAPI best practices with dependency injection
+- Frontend: Use TypeScript and functional components with hooks
+- API: RESTful design with proper HTTP status codes
+- Error Handling: Comprehensive error handling on both ends
 
 ### Adding New Features
 
-1. **Backend**: Add routes in `backend/app/routers/`
-2. **Frontend**: Add components in `frontend/src/components/`
-3. **Models**: Define data models in `backend/app/models/`
-4. **Services**: Business logic in `backend/app/services/`
+1. Backend: Add routes in `backend/app/routers/`
+2. Frontend: Add components in `frontend/src/components/`
+3. Models: Define data models in `backend/app/models/`
+4. Services: Business logic in `backend/app/services/`
 
-## 🔍 Troubleshooting
+## Troubleshooting (Web UI)
 
 ### Common Issues
 
@@ -450,7 +526,7 @@ sudo chmod 644 /usr/share/applications/EE-DE_*.desktop
 sudo update-desktop-database /usr/share/applications/
 ```
 
-## 🤝 Contributing
+## Contributing
 
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feature/amazing-feature`
@@ -458,12 +534,12 @@ sudo update-desktop-database /usr/share/applications/
 4. Push to branch: `git push origin feature/amazing-feature`
 5. Open a Pull Request
 
-## 📝 License
+## License (Web UI)
 
 This project is licensed under the MIT License - see the LICENSE file for details.
 
-## 🆘 Support
+## Support
 
-- **Issues**: Report bugs and request features via GitHub Issues
-- **Documentation**: Check the `/docs` directory for detailed guides
-- **API Reference**: Use the interactive docs at `/docs` when running
+- Issues: Report bugs and request features via GitHub Issues
+- Documentation: Check the `/docs` directory for detailed guides
+- API Reference: Use the interactive docs at `/docs` when running
