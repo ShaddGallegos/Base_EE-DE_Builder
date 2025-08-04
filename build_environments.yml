@@ -1,612 +1,85 @@
-# --- Ensure env.conf exists and all credentials are set (RUN THIS FIRST) ---
-- name: Ensure env.conf exists and all credentials are set
+- name: Ensure ~/.ansible/conf/env.conf contains required credentials
   hosts: localhost
   gather_facts: false
-  tasks:
-    - name: Check if env.conf exists
-      stat:
-        path: "{{ lookup('env', 'HOME') }}/.ansible/conf/env.conf"
-      register: env_conf_stat
-
-    - name: Read env.conf if it exists
-      slurp:
-        src: "{{ lookup('env', 'HOME') }}/.ansible/conf/env.conf"
-      register: env_conf_slurp
-      when: env_conf_stat.stat.exists
-
-    - name: Parse env.conf for required variables
-      set_fact:
-        env_conf_lines: "{{ (env_conf_slurp.content | b64decode).splitlines() }}"
-        rh_credentials_token_val: "{{ env_conf_lines | select('match', '^RH_CREDENTIALS_TOKEN=') | map('regex_replace', '^RH_CREDENTIALS_TOKEN=(.*)', '\\1') | list | first | default('') }}"
-        redhat_cdn_username_val: "{{ env_conf_lines | select('match', '^REDHAT_CDN_USERNAME=') | map('regex_replace', '^REDHAT_CDN_USERNAME=(.*)', '\\1') | list | first | default('') }}"
-        redhat_cdn_password_val: "{{ env_conf_lines | select('match', '^REDHAT_CDN_PASSWORD=') | map('regex_replace', '^REDHAT_CDN_PASSWORD=(.*)', '\\1') | list | first | default('') }}"
-      when: env_conf_stat.stat.exists
-
-    # The following playbook import must be handled outside of tasks, so see documentation for conditional imports.
-    # If you want to conditionally run env_conf.yml, you must split your playbooks or use include_tasks/import_tasks with proper logic.
-    # - import_playbook: env_conf.yml
-
-# --- Main Playbook Logic Starts Here ---
-- name: Ensure Python 3.12 and Ansible 10+ are installed
-  hosts: localhost
-  become: true
-  gather_facts: false
-
   pre_tasks:
-    - name: Ensure /var/log/ansible-builder.log exists with correct permissions
-      ansible.builtin.file:
-        path: /var/log/ansible-builder.log
-        state: touch
-        owner: root
-        group: root
-        mode: '0644'
-
-    - name: Truncate /var/log/ansible-builder.log at start of run
-      ansible.builtin.copy:
-        dest: /var/log/ansible-builder.log
-        content: ''
-        owner: root
-        group: root
-        mode: '0644'
-
-    - name: Ensure newuidmap and newgidmap are setuid root
-      ansible.builtin.file:
-        path: "{{ item }}"
-        mode: '4755'
-        owner: root
-        group: root
-      loop:
-        - /usr/bin/newuidmap
-        - /usr/bin/newgidmap
-
-    - name: Enable required RHEL 9 and AAP repositories
-      ansible.builtin.shell: |
-        subscription-manager repos --enable=ansible-automation-platform-2.5-for-rhel-9-x86_64-rpms \
-                                  --enable=codeready-builder-for-rhel-9-x86_64-rpms \
-                                  --enable=rhel-9-for-x86_64-appstream-rpms \
-                                  --enable=rhel-9-for-x86_64-baseos-rpms \
-                                  --enable=rhel-9-for-x86_64-supplementary-rpms
-      register: enable_repos_result
-      changed_when: "'enabled' in enable_repos_result.stdout or 'The repository has been enabled' in enable_repos_result.stdout"
-      failed_when: false
-
-    - name: Ensure /etc/subuid entry exists for user
+    - name: Ensure user has subuid mapping for rootless Podman
+      become: true
       ansible.builtin.lineinfile:
         path: /etc/subuid
         line: "{{ lookup('env','USER') }}:100000:65536"
         create: yes
         state: present
 
-    - name: Ensure /etc/subgid entry exists for user
+    - name: Ensure user has subgid mapping for rootless Podman
+      become: true
       ansible.builtin.lineinfile:
         path: /etc/subgid
         line: "{{ lookup('env','USER') }}:100000:65536"
         create: yes
         state: present
 
-  tasks:
-    - name: Install Python 3.11 and development tools
-      ansible.builtin.package:
-        name:
-          - python3.11
-          - python3.11-devel
-          - python3.11-pip
-          - gcc
-          - make
-          - libffi-devel
-          - openssl-devel
-        state: present
-
-    - name: Ensure python3.11 is available in PATH
-      ansible.builtin.command: which python3.11
-      register: python311_path
-      changed_when: false
-      failed_when: python311_path.rc != 0
-
-    - name: Remove any existing alias for python in ~/.bashrc
-      ansible.builtin.lineinfile:
-        path: "{{ lookup('env','HOME') }}/.bashrc"
-        regexp: '^alias python='
-        state: absent
-
-    - name: Add alias for python to python3.11 in ~/.bashrc
-      ansible.builtin.lineinfile:
-        path: "{{ lookup('env','HOME') }}/.bashrc"
-        line: "alias python=python3.11"
-        insertafter: EOF
-
-    - name: Show python3.11 version
-      ansible.builtin.command: python3.11 --version
-      register: python311_version
-      changed_when: false
-
-    - name: Ensure pip for Python 3.11 is upgraded
-      ansible.builtin.shell: |
-        python3.11 -m pip install --upgrade  --ignore-installed --user pip setuptools wheel jmespath
-      args:
-        executable: /bin/bash
-
-    - name: Uninstall old Ansible if present (optional, safe)
-      ansible.builtin.shell: |
-        python3.11 -m pip uninstall -y ansible || true
-      args:
-        executable: /bin/bash
-      ignore_errors: true
-
-    - name: Install Ansible (user install) for Python 3.11
-      ansible.builtin.shell: |
-        python3.11 -m pip install --upgrade --ignore-installed --user ansible
-      args:
-        executable: /bin/bash
-
-    - name: Show python3.11 version (system-wide)
-      ansible.builtin.command: python3.11 --version
-      changed_when: false
-
-- name: Load secrets and prompt if not set
-  hosts: localhost
-  gather_facts: false
-  vars:
-    environments_dir: "{{ playbook_dir }}/environments"
-  tasks:
-    - name: Set env_conf_path variable
-      set_fact:
-        env_conf_path: "{{ lookup('env', 'HOME') }}/.ansible/conf/env.conf"
-
-    - name: Check if ~/.ansible/conf/env.conf exists
-      ansible.builtin.stat:
-        path: "{{ env_conf_path }}"
-      register: env_conf_stat
-
-    - name: Read and parse ~/.ansible/conf/env.conf if it exists
-      ansible.builtin.slurp:
-        src: "{{ env_conf_path }}"
-      register: env_conf_slurp
-      when: env_conf_stat.stat.exists
-      tags:
-        - Read_and_parse
-
-    - name: Set secrets from env.conf if available
-      set_fact:
-        rh_credentials_token: "{{ (env_conf_slurp.content | b64decode).splitlines() | select('match', '^RH_CREDENTIALS_TOKEN=') | map('regex_replace', '^RH_CREDENTIALS_TOKEN=(.*)', '\\1') | list | first | default('') }}"
-        redhat_cdn_username: "{{ (env_conf_slurp.content | b64decode).splitlines() | select('match', '^REDHAT_CDN_USERNAME=') | map('regex_replace', '^REDHAT_CDN_USERNAME=(.*)', '\\1') | list | first | default('') }}"
-        redhat_cdn_password: "{{ (env_conf_slurp.content | b64decode).splitlines() | select('match', '^REDHAT_CDN_PASSWORD=') | map('regex_replace', '^REDHAT_CDN_PASSWORD=(.*)', '\\1') | list | first | default('') }}"
-      when: env_conf_slurp is defined
-
-    - name: Prompt for RH_CREDENTIALS_TOKEN if not set
-      ansible.builtin.pause:
-        prompt: "Enter your Red Hat Automation Hub token"
-        echo: no
-      register: prompt_rh_token
-      when: rh_credentials_token is not defined or rh_credentials_token == ""
-
-    - name: Set RH_CREDENTIALS_TOKEN from prompt
-      set_fact:
-        rh_credentials_token: "{{ prompt_rh_token.user_input }}"
-      when: rh_credentials_token is not defined or rh_credentials_token == ""
-
-    - name: Prompt for REDHAT_CDN_USERNAME if not set
-      ansible.builtin.pause:
-        prompt: "Enter your Red Hat CDN username"
-      register: prompt_rh_user
-      when: redhat_cdn_username is not defined or redhat_cdn_username == ""
-
-    - name: Set REDHAT_CDN_USERNAME from prompt
-      set_fact:
-        redhat_cdn_username: "{{ prompt_rh_user.user_input }}"
-      when: redhat_cdn_username is not defined or redhat_cdn_username == ""
-
-    - name: Prompt for REDHAT_CDN_PASSWORD if not set
-      ansible.builtin.pause:
-        prompt: "Enter your Red Hat CDN password"
-        echo: no
-      register: prompt_rh_pass
-      when: redhat_cdn_password is not defined or redhat_cdn_password == ""
-
-    - name: Set REDHAT_CDN_PASSWORD from prompt
-      set_fact:
-        redhat_cdn_password: "{{ prompt_rh_pass.user_input }}"
-      when: redhat_cdn_password is not defined or redhat_cdn_password == ""
-
-    # --- Environment Discovery and Validation ---
-
-    # --- Build a numeric menu for the user to select environment(s) ---
-    - name: Find all RHEL environment directories
-      ansible.builtin.find:
-        paths: "{{ environments_dir }}"
-        file_type: directory
-        excludes: ".*"
-      register: found_rhel_dirs
-
-    - name: Filter only directories with 'rhel' in the name
-      set_fact:
-        rhel_dirs: "{{ found_rhel_dirs.files | selectattr('path', 'search', 'rhel') | list | sort(attribute='path') }}"
-
-
-
-
-    - name: Build menu options as a list of lines (for vertical display)
-      vars:
-        menu_lines: |
-          {% set lines = ['rhel_environments:'] %}
-          {% for dir in rhel_dirs | map(attribute='path') | map('basename') | list %}
-          {% set _ = lines.append(loop.index|string + '. ' + dir) %}
-          {% endfor %}
-          {% set _ = lines.append((rhel_dirs|length + 1)|string + '. ALL') %}
-          {% set _ = lines.append("This menu accepts a single selection or a ',' separated list.") %}
-          {% set _ = lines.append(':') %}
-          {{ lines }}
-      set_fact:
-        menu_options_lines: "{{ menu_lines }}"
-
-    - name: Display menu options
-      ansible.builtin.debug:
-        msg: "{{ menu_options_lines }}"
-
-
-    - name: Prompt user for environment selection
-      ansible.builtin.pause:
-        prompt: |
-          Enter comma-separated numbers (e.g. 1,3,4) or '{{ rhel_dirs|length + 1 }}' for all:
-      register: user_selection
-
-    # --- Debug transformation steps for user input selection ---
-    - name: Debug split user input
-      ansible.builtin.debug:
-        msg: |
-          split_input: {{ user_selection.user_input.replace(' ', '').split(',') }}
-          type: {{ user_selection.user_input.replace(' ', '').split(',') | type_debug }}
-
-    - name: Debug map to int
-      ansible.builtin.debug:
-        msg: |
-          mapped_int: {{ user_selection.user_input.replace(' ', '').split(',') | map('int') | list }}
-          type: {{ user_selection.user_input.replace(' ', '').split(',') | map('int') | list | type_debug }}
-
-
-
-
-
-    - name: Debug user_selection.user_input and its type before set_fact
-      ansible.builtin.debug:
-        msg: |
-          user_selection.user_input: {{ user_selection.user_input }}
-          type: {{ user_selection.user_input | type_debug }}
-
-    - name: Set environment_list to all if user selects 'all' or N+1
-      set_fact:
-        environment_list: "{{ rhel_dirs | map(attribute='path') | map('basename') | list }}"
-      when: user_selection.user_input | trim | lower == 'all' or user_selection.user_input | trim == (rhel_dirs|length + 1)|string
-
-    - name: Set environment_list to selected items if user provides a list
-      set_fact:
-        environment_list: |
-          {% set envs = rhel_dirs | map(attribute='path') | map('basename') | list %}
-          {% set idxs = user_selection.user_input.replace(' ', '').split(',') | map('int') | list %}
-          [{% for i in idxs if 1 <= i <= (envs | length) %}{{ '"' + envs[i-1] + '"' }}{% if not loop.last %}, {% endif %}{% endfor %}]
-      when: user_selection.user_input | trim | lower != 'all' and user_selection.user_input | trim != (rhel_dirs|length + 1)|string
-
-    - name: Debug selected environment list
-      ansible.builtin.debug:
-        msg: |
-          Environments selected for build:
-          {{ environment_list | map('string') | join('\n  - ') | regex_replace('^', '  - ') }}
-
-    - name: Debug environment_list type
-      ansible.builtin.debug:
-        msg: "Type of environment_list: {{ environment_list | type_debug }}"
-
-    - name: Check for execution-environment.yml in each environment
-      ansible.builtin.stat:
-        path: "{{ environments_dir }}/{{ item }}/execution-environment.yml"
-      register: ee_yml_check
-      loop: "{{ environment_list }}"
-
-    - name: Fail if execution-environment.yml is missing
-      ansible.builtin.fail:
-        msg: "Missing execution-environment.yml in {{ environments_dir }}/{{ item.item }}"
-      loop: "{{ ee_yml_check.results }}"
-      when: not item.stat.exists
-      loop_control:
-        label: "{{ item.item }}"
-
-    # --- Build Context Preparation ---
-    - name: Remove contest/ folders in each environment for clean build
+    - name: Ensure /usr/bin/newuidmap is setuid root
       become: true
       ansible.builtin.file:
-        path: "{{ environments_dir }}/{{ item }}/contest"
-        state: absent
-      loop: "{{ environment_list | default([]) }}"
-      loop_control:
-        label: "{{ item }}"
-      failed_when: false
+        path: /usr/bin/newuidmap
+        mode: '4755'
 
-    - name: Prepare /tmp build context for each environment
-      ansible.builtin.shell: |
-        rm -rf /tmp/ee-build-{{ item }}
-        mkdir -p /tmp/ee-build-{{ item }}
-        cp -a {{ environments_dir }}/{{ item }}/* /tmp/ee-build-{{ item }}/
-      loop: "{{ environment_list }}"
-      loop_control:
-        label: "{{ item }}"
-      changed_when: true
-      failed_when: false
-
-    - name: Copy ansible.cfg template to build context for each environment
-      ansible.builtin.template:
-        src: "templates/ansible.cfg.j2"
-        dest: "/tmp/ee-build-{{ item }}/ansible.cfg"
-        mode: '0644'
-      loop: "{{ environment_list }}"
-      loop_control:
-        label: "{{ item }}"
-      failed_when: false
-
-    # --- Build Logic ---
-    - name: Set build timestamp for each environment
-      set_fact:
-        build_timestamp: "{{ lookup('pipe', 'date +%Y%m%d-%H%M%S') }}"
-
-    - name: Show build command and PATH for each environment
-      ansible.builtin.shell: |
-        set -o pipefail
-        echo "PATH before build: $PATH"
-        echo "Building environment: {{ item }}"
-        echo "PATH: $PATH"
-        echo "Building: {{ item }}"
-        echo "Command: ansible-builder build --build-arg ANSIBLE_GALAXY_CLI_COLLECTION_OPTS=--ignore-certs \\
-        echo "         --container-runtime {{ container_runtime | default('podman') }} \\
-        echo "         --file /tmp/ee-build-{{ item }}/execution-environment.yml \\
-        echo "         --tag {{ item }}:{{ build_timestamp }} \\
-        echo "         --verbosity 3 > /tmp/ee-build-{{ item }}/build.log 2>&1"
-        echo "         (see /tmp/ee-build-{{ item }}/build.log for full output)"
-      environment:
-        PATH: "{{ lookup('env', 'HOME') }}/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin:{{ lookup('env', 'PATH') }}"
-      register: debug_build_env
-      loop: "{{ environment_list }}"
-      changed_when: false
-      failed_when: false
-
-    - name: Get checksum of execution-environment.yml
-      ansible.builtin.stat:
-        path: "/tmp/ee-build-{{ item }}/execution-environment.yml"
-        checksum_algorithm: sha1
-      register: ee_yml_stat
-      loop: "{{ environment_list }}"
-      loop_control:
-        label: "{{ item }}"
-
-    - name: Get last build checksum for each environment
-      ansible.builtin.stat:
-        path: "/tmp/ee-build-{{ item }}/.last_build_checksum"
-      register: last_build_checksum_stat
-      loop: "{{ environment_list }}"
-      loop_control:
-        label: "{{ item }}"
-
-
-
-    - name: Debug checksum comparison for each environment
-      ansible.builtin.debug:
-        msg: |
-          ENV: {{ item }}
-          Current checksum: {{
-            ee_yml_stat.results
-              | selectattr('item', 'equalto', item)
-              | map(attribute='stat.checksum')
-              | first | default('')
-          }}
-          Last build checksum: {{
-            last_build_checksum_stat.results
-              | selectattr('item', 'equalto', item)
-              | map(attribute='stat.checksum')
-              | first | default('')
-          }}
-          Will build: {{
-            (
-              ee_yml_stat.results
-                | selectattr('item', 'equalto', item)
-                | map(attribute='stat.checksum')
-                | first | default('')
-            ) != (
-              last_build_checksum_stat.results
-                | selectattr('item', 'equalto', item)
-                | map(attribute='stat.checksum')
-                | first | default('')
-            )
-          }}
-      loop: "{{ environment_list }}"
-
-    # --- Registry login must come before build ---
-    - name: Define Red Hat registries to try (prefer registry.redhat.io)
-      set_fact:
-        rh_registries:
-          - registry.redhat.io
-          - registry.access.redhat.com
-          - registry.connect.redhat.com
-
-    - name: Try login to Red Hat registries until one works
+    - name: Ensure /usr/bin/newgidmap is setuid root
       become: true
-      ansible.builtin.shell: |
-        podman login --get-login {{ item }} 2>/dev/null || \
-        podman login {{ item }} --username {{ redhat_cdn_username }} --password {{ redhat_cdn_password }}
-      register: podman_login_result
+      ansible.builtin.file:
+        path: /usr/bin/newgidmap
+        mode: '4755'
+
+    - name: Check if ansible-builder is installed for user
+      ansible.builtin.command: "{{ ansible_playbook_python }} -m pip show ansible-builder"
+      register: ab_check
       failed_when: false
-      no_log: true
-      loop: "{{ rh_registries }}"
-
-    - name: Set which registry was used
-      set_fact:
-        rh_registry_logged_in: "{{ podman_login_result.results | selectattr('rc', 'equalto', 0) | map(attribute='item') | first }}"
-      when: podman_login_result.results | selectattr('rc', 'equalto', 0) | list | length > 0
-
-    - name: Fail if login to all registries failed
-      ansible.builtin.fail:
-        msg: "Could not log in to any Red Hat registry!"
-      when: rh_registry_logged_in is not defined
-
-    - name: Debug which registry was used
-      ansible.builtin.debug:
-        msg: "Logged in to Red Hat registry: {{ rh_registry_logged_in }}"
-
-    - name: Build execution environment with ansible-builder
-      become: true
-      ansible.builtin.shell: |
-        ansible-builder build \
-          --build-arg ANSIBLE_GALAXY_CLI_COLLECTION_OPTS=--ignore-certs \
-          --container-runtime {{ container_runtime | default('podman') }} \
-          --prune \
-          --file /tmp/ee-build-{{ item }}/execution-environment.yml \
-          --tag {{ item }}:{{ build_timestamp }} \
-          --verbosity 3 > /tmp/ee-build-{{ item }}/build.log 2>&1
-        cat /tmp/ee-build-{{ item }}/build.log >> /var/log/ansible-builder.log
-        podman image ls -a | grep '<none>' | awk '{print $3}' | xargs podman rmi -f || true
-      args:
-        chdir: "/tmp/ee-build-{{ item }}"
-        executable: /bin/bash
-      environment:
-        PATH: "{{ lookup('env', 'HOME') }}/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin:{{ lookup('env', 'PATH') }}"
-      register: build_result
-      loop: "{{ environment_list }}"
-      loop_control:
-        label: "{{ item }}"
-      failed_when: false
-      ignore_errors: "{{ environment_list | length > 1 }}"
-
-    - name: Save new checksum after build
-      ansible.builtin.copy:
-        dest: "/tmp/ee-build-{{ item }}/.last_build_checksum"
-        content: >-
-          {{
-            ee_yml_stat.results
-              | selectattr('item', 'equalto', item)
-              | map(attribute='stat.checksum')
-              | first | default('')
-          }}
-        mode: '0644'
-      loop: "{{ environment_list }}"
-      loop_control:
-        label: "{{ item }}"
-      failed_when: false
-
-
-    - name: Show environment_list and env_item before build
-      ansible.builtin.debug:
-        msg: |
-          env_item: {{ env_item | default('UNDEFINED') }}
-          environment_list: {{ environment_list }}
-      loop: "{{ environment_list }}"
-      loop_control:
-        label: "{{ env_item }}"
-        loop_var: env_item
-
-    - name: Check for user namespace error in build log
-      ansible.builtin.shell: |
-        grep -q 'newuidmap.*Permission denied' /tmp/ee-build-{{ env_item }}/build.log && echo 'fail' || echo 'ok'
-      register: ns_check
       changed_when: false
-      failed_when: false
-      loop: "{{ environment_list }}"
-      loop_control:
-        label: "{{ env_item }}"
-        loop_var: env_item
 
-    - name: Fallback to sudo podman build if user namespace error detected
-      ansible.builtin.shell: |
-        sudo ansible-builder build \
-          --prune \
-          --build-arg ANSIBLE_GALAXY_CLI_COLLECTION_OPTS=--ignore-certs \
-          --container-runtime {{ container_runtime | default('podman') }} \
-          --file /tmp/ee-build-{{ env_item }}/execution-environment.yml \
-          --tag {{ env_item }}:{{ build_timestamp }} \
-          --verbosity 3 > /tmp/ee-build-{{ env_item }}/build.log 2>&1
-      args:
-        chdir: "/tmp/ee-build-{{ env_item }}"
-      environment:
-        PATH: "/usr/bin:/bin:/usr/sbin:/sbin:{{ lookup('env', 'PATH') }}"
-      register: build_result_sudo
-      failed_when: false
-      loop: "{{ environment_list }}"
-      loop_control:
-        label: "{{ env_item }}"
-        loop_var: env_item
-      when:
-        - (ns_check.results | selectattr('env_item', 'equalto', env_item) | list | length > 0 and
-           (ns_check.results | selectattr('env_item', 'equalto', env_item) | map(attribute='stdout') | first | default('ok')) == 'fail')
+    - name: Install ansible-builder if missing
+      ansible.builtin.pip:
+        name: ansible-builder
+        executable: "{{ ansible_playbook_python }}"
+        extra_args: --user
+      when: ab_check.rc != 0
 
+    - name: Ensure ~/.ansible/conf directory exists
+      file:
+        path: "{{ lookup('env', 'HOME') }}/.ansible/conf"
+        state: directory
+        mode: '0700'
 
-    - name: Show failed build logs summary
-      ansible.builtin.shell: |
-        echo "\nFAILED BUILDS LOG SUMMARY:"
-        for env in {{ environment_list | join(' ') }}; do
-          if grep -q 'failed\|error\|traceback' /tmp/ee-build-$env/build.log; then
-            echo "  - $env: /tmp/ee-build-$env/build.log"
-          fi
-        done
-      args:
-        executable: /bin/bash
-      changed_when: false
-      failed_when: false
+    - name: Ensure env.conf file exists
+      copy:
+        dest: "{{ lookup('env', 'HOME') }}/.ansible/conf/env.conf"
+        content: ""
+        force: no
+        mode: '0600'
 
-    - name: Collect build results for report
+    - name: Read env.conf
+      slurp:
+        src: "{{ lookup('env', 'HOME') }}/.ansible/conf/env.conf"
+      register: env_conf_slurp
+
+    - name: Parse env.conf lines
       set_fact:
-        build_report: >-
-          {{
-            (build_report | default({}))
-            | combine({
-                item: {
-                  'built': (
-                    (
-                      ee_yml_stat.results
-                        | selectattr('item', 'equalto', item)
-                        | map(attribute='stat.checksum')
-                        | first | default('')
-                    ) != (
-                      last_build_checksum_stat.results
-                        | selectattr('item', 'equalto', item)
-                        | map(attribute='stat.checksum')
-                        | first | default('')
-                    )
-                  ),
-                  'log': "/tmp/ee-build-{{ item }}/build.log"
-                }
-              })
-          }}
-      loop: "{{ environment_list }}"
-      loop_control:
-        label: "{{ item }}"
+        env_conf_lines: "{{ (env_conf_slurp.content | b64decode).splitlines() }}"
 
-    - name: Show build summary report
-      ansible.builtin.debug:
-        msg: |
-          Build Summary:
-          {% for env, result in build_report.items() %}
-            - {{ env }}: {% if result.built %}UPDATED/CREATED{% else %}SKIPPED (no changes){% endif %} (log: {{ result.log }})
-          {% endfor %}
+    - name: Set facts for existing secrets
+      set_fact:
+        rh_credentials_token: "{{ env_conf_lines | select('match', '^RH_CREDENTIALS_TOKEN=') | map('regex_replace', '^RH_CREDENTIALS_TOKEN=(.*)', '\\1') | list | first | default('') }}"
+        redhat_cdn_username: "{{ env_conf_lines | select('match', '^REDHAT_CDN_USERNAME=') | map('regex_replace', '^REDHAT_CDN_USERNAME=(.*)', '\\1') | list | first | default('') }}"
+        redhat_cdn_password: "{{ env_conf_lines | select('match', '^REDHAT_CDN_PASSWORD=') | map('regex_replace', '^REDHAT_CDN_PASSWORD=(.*)', '\\1') | list | first | default('') }}"
 
-- name: Build environments
+- name: Build selected execution environments
   hosts: localhost
   gather_facts: false
   vars:
     environments_dir: "{{ playbook_dir }}/environments"
     env_conf_path: "{{ lookup('env', 'HOME') }}/.ansible/conf/env.conf"
+    ab_log: "/var/log/ansible-builder.log"
+    build_tag: "{{ lookup('pipe', 'date +%Y%m%d-%H%M%S') }}"
   tasks:
-    - name: Read and parse ~/.ansible/conf/env.conf if it exists
-      ansible.builtin.slurp:
-        src: "{{ env_conf_path }}"
-      register: env_conf_slurp
-      tags:
-        - Read_and_parse
-
-    - name: Set secrets from env.conf
-      set_fact:
-        rh_credentials_token: "{{ (env_conf_slurp.content | b64decode).splitlines() | select('match', '^RH_CREDENTIALS_TOKEN=') | map('regex_replace', '^RH_CREDENTIALS_TOKEN=(.*)', '\\1') | list | first | default('') }}"
-        redhat_cdn_username: "{{ (env_conf_slurp.content | b64decode).splitlines() | select('match', '^REDHAT_CDN_USERNAME=') | map('regex_replace', '^REDHAT_CDN_USERNAME=(.*)', '\\1') | list | first | default('') }}"
-        redhat_cdn_password: "{{ (env_conf_slurp.content | b64decode).splitlines() | select('match', '^REDHAT_CDN_PASSWORD=') | map('regex_replace', '^REDHAT_CDN_PASSWORD=(.*)', '\\1') | list | first | default('') }}"
-
-    # --- Environment Discovery and Validation ---
-
-    # --- Build a numeric menu for the user to select environment(s) ---
     - name: Find all RHEL environment directories
       ansible.builtin.find:
         paths: "{{ environments_dir }}"
@@ -617,9 +90,6 @@
     - name: Filter only directories with 'rhel' in the name
       set_fact:
         rhel_dirs: "{{ found_rhel_dirs.files | selectattr('path', 'search', 'rhel') | list | sort(attribute='path') }}"
-
-
-
 
     - name: Build menu options as a list of lines (for vertical display)
       vars:
@@ -639,35 +109,11 @@
       ansible.builtin.debug:
         msg: "{{ menu_options_lines }}"
 
-
     - name: Prompt user for environment selection
       ansible.builtin.pause:
         prompt: |
           Enter comma-separated numbers (e.g. 1,3,4) or '{{ rhel_dirs|length + 1 }}' for all:
       register: user_selection
-
-    # --- Debug transformation steps for user input selection ---
-    - name: Debug split user input
-      ansible.builtin.debug:
-        msg: |
-          split_input: {{ user_selection.user_input.replace(' ', '').split(',') }}
-          type: {{ user_selection.user_input.replace(' ', '').split(',') | type_debug }}
-
-    - name: Debug map to int
-      ansible.builtin.debug:
-        msg: |
-          mapped_int: {{ user_selection.user_input.replace(' ', '').split(',') | map('int') | list }}
-          type: {{ user_selection.user_input.replace(' ', '').split(',') | map('int') | list | type_debug }}
-
-
-
-
-
-    - name: Debug user_selection.user_input and its type before set_fact
-      ansible.builtin.debug:
-        msg: |
-          user_selection.user_input: {{ user_selection.user_input }}
-          type: {{ user_selection.user_input | type_debug }}
 
     - name: Set environment_list to all if user selects 'all' or N+1
       set_fact:
@@ -676,10 +122,8 @@
 
     - name: Set environment_list to selected items if user provides a list
       set_fact:
-        environment_list: |
-          {% set envs = rhel_dirs | map(attribute='path') | map('basename') | list %}
-          {% set idxs = user_selection.user_input.replace(' ', '').split(',') | map('int') | list %}
-          [{% for i in idxs if 1 <= i <= (envs | length) %}{{ '"' + envs[i-1] + '"' }}{% if not loop.last %}, {% endif %}{% endfor %}]
+        environment_list: >-
+          {{ rhel_dirs | map(attribute='path') | map('basename') | list | zip(range(1, rhel_dirs|length + 1)) | selectattr('1', 'in', user_selection.user_input.replace(' ', '').split(',') | map('int') | list) | map('first') | list }}
       when: user_selection.user_input | trim | lower != 'all' and user_selection.user_input | trim != (rhel_dirs|length + 1)|string
 
     - name: Debug selected environment list
@@ -687,10 +131,6 @@
         msg: |
           Environments selected for build:
           {{ environment_list | map('string') | join('\n  - ') | regex_replace('^', '  - ') }}
-
-    - name: Debug environment_list type
-      ansible.builtin.debug:
-        msg: "Type of environment_list: {{ environment_list | type_debug }}"
 
     - name: Check for execution-environment.yml in each environment
       ansible.builtin.stat:
@@ -706,276 +146,64 @@
       loop_control:
         label: "{{ item.item }}"
 
-    # --- Build Context Preparation ---
-    - name: Remove contest/ folders in each environment for clean build
+    - name: Clean up old /tmp/ee-build-{{ item }} as root
       become: true
       ansible.builtin.file:
-        path: "{{ environments_dir }}/{{ item }}/contest"
+        path: "/tmp/ee-build-{{ item }}"
         state: absent
-      loop: "{{ environment_list | default([]) }}"
-      loop_control:
-        label: "{{ item }}"
-      failed_when: false
+      loop: "{{ environment_list }}"
+      ignore_errors: true
 
     - name: Prepare /tmp build context for each environment
       ansible.builtin.shell: |
-        rm -rf /tmp/ee-build-{{ item }}
         mkdir -p /tmp/ee-build-{{ item }}
         cp -a {{ environments_dir }}/{{ item }}/* /tmp/ee-build-{{ item }}/
       loop: "{{ environment_list }}"
-      loop_control:
-        label: "{{ item }}"
       changed_when: true
-      failed_when: false
 
-    - name: Copy ansible.cfg template to build context for each environment
+    - name: Template ansible.cfg into build context
       ansible.builtin.template:
-        src: "templates/ansible.cfg.j2"
+        src: templates/ansible.cfg.j2
         dest: "/tmp/ee-build-{{ item }}/ansible.cfg"
         mode: '0644'
       loop: "{{ environment_list }}"
       loop_control:
         label: "{{ item }}"
-      failed_when: false
 
-    # --- Build Logic ---
-    - name: Set build timestamp for each environment
-      set_fact:
-        build_timestamp: "{{ lookup('pipe', 'date +%Y%m%d-%H%M%S') }}"
-
-    - name: Show build command and PATH for each environment
-      ansible.builtin.shell: |
-        set -o pipefail
-        echo "PATH before build: $PATH"
-        echo "Building environment: {{ item }}"
-        echo "PATH: $PATH"
-        echo "Building: {{ item }}"
-        echo "Command: ansible-builder build --build-arg ANSIBLE_GALAXY_CLI_COLLECTION_OPTS=--ignore-certs \\
-        echo "         --container-runtime {{ container_runtime | default('podman') }} \\
-        echo "         --file /tmp/ee-build-{{ item }}/execution-environment.yml \\
-        echo "         --tag {{ item }}:{{ build_timestamp }} \\
-        echo "         --verbosity 3 > /tmp/ee-build-{{ item }}/build.log 2>&1"
-        echo "         (see /tmp/ee-build-{{ item }}/build.log for full output)"
-      environment:
-        PATH: "{{ lookup('env', 'HOME') }}/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin:{{ lookup('env', 'PATH') }}"
-      register: debug_build_env
-      loop: "{{ environment_list }}"
-      changed_when: false
-      failed_when: false
-
-    - name: Get checksum of execution-environment.yml
-      ansible.builtin.stat:
-        path: "/tmp/ee-build-{{ item }}/execution-environment.yml"
-        checksum_algorithm: sha1
-      register: ee_yml_stat
-      loop: "{{ environment_list }}"
-      loop_control:
-        label: "{{ item }}"
-
-    - name: Get last build checksum for each environment
-      ansible.builtin.stat:
-        path: "/tmp/ee-build-{{ item }}/.last_build_checksum"
-      register: last_build_checksum_stat
-      loop: "{{ environment_list }}"
-      loop_control:
-        label: "{{ item }}"
-
-
-
-    - name: Debug checksum comparison for each environment
-      ansible.builtin.debug:
-        msg: |
-          ENV: {{ item }}
-          Current checksum: {{
-            ee_yml_stat.results
-              | selectattr('item', 'equalto', item)
-              | map(attribute='stat.checksum')
-              | first | default('')
-          }}
-          Last build checksum: {{
-            last_build_checksum_stat.results
-              | selectattr('item', 'equalto', item)
-              | map(attribute='stat.checksum')
-              | first | default('')
-          }}
-          Will build: {{
-            (
-              ee_yml_stat.results
-                | selectattr('item', 'equalto', item)
-                | map(attribute='stat.checksum')
-                | first | default('')
-            ) != (
-              last_build_checksum_stat.results
-                | selectattr('item', 'equalto', item)
-                | map(attribute='stat.checksum')
-                | first | default('')
-            )
-          }}
-      loop: "{{ environment_list }}"
-
-    # --- Registry login must come before build ---
-    - name: Define Red Hat registries to try (prefer registry.redhat.io)
-      set_fact:
-        rh_registries:
-          - registry.redhat.io
-          - registry.access.redhat.com
-          - registry.connect.redhat.com
-
-    - name: Try login to Red Hat registries until one works
+    - name: Ensure ansible-builder log file exists and is writable
       become: true
-      ansible.builtin.shell: |
-        podman login --get-login {{ item }} 2>/dev/null || \
-        podman login {{ item }} --username {{ redhat_cdn_username }} --password {{ redhat_cdn_password }}
-      register: podman_login_result
-      failed_when: false
-      no_log: true
-      loop: "{{ rh_registries }}"
-
-    - name: Set which registry was used
-      set_fact:
-        rh_registry_logged_in: "{{ podman_login_result.results | selectattr('rc', 'equalto', 0) | map(attribute='item') | first }}"
-      when: podman_login_result.results | selectattr('rc', 'equalto', 0) | list | length > 0
-
-    - name: Fail if login to all registries failed
-      ansible.builtin.fail:
-        msg: "Could not log in to any Red Hat registry!"
-      when: rh_registry_logged_in is not defined
-
-    - name: Debug which registry was used
-      ansible.builtin.debug:
-        msg: "Logged in to Red Hat registry: {{ rh_registry_logged_in }}"
+      ansible.builtin.file:
+        path: "{{ ab_log }}"
+        state: touch
+        mode: '0666'
 
     - name: Build execution environment with ansible-builder
       become: true
       ansible.builtin.shell: |
+        echo "=== Building {{ item }} at $(date) ===" | tee -a {{ ab_log }}
         ansible-builder build \
-          --build-arg ANSIBLE_GALAXY_CLI_COLLECTION_OPTS=--ignore-certs \
-          --container-runtime {{ container_runtime | default('podman') }} \
+          --container-runtime podman \
+          --file execution-environment.yml \
+          --tag {{ item }}:{{ build_tag }} \
           --prune \
-          --file /tmp/ee-build-{{ item }}/execution-environment.yml \
-          --tag {{ item }}:{{ build_timestamp }} \
-          --verbosity 3 > /tmp/ee-build-{{ item }}/build.log 2>&1
-        cat /tmp/ee-build-{{ item }}/build.log >> /var/log/ansible-builder.log
+          --verbosity 3 2>&1 | tee -a {{ ab_log }}
+        echo "=== Done {{ item }} at $(date) ===" | tee -a {{ ab_log }}
         podman image ls -a | grep '<none>' | awk '{print $3}' | xargs podman rmi -f || true
       args:
         chdir: "/tmp/ee-build-{{ item }}"
         executable: /bin/bash
       environment:
-        PATH: "{{ lookup('env', 'HOME') }}/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin:{{ lookup('env', 'PATH') }}"
-      register: build_result
+        PATH: "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:{{ lookup('env', 'PATH') }}"
       loop: "{{ environment_list }}"
       loop_control:
         label: "{{ item }}"
-      failed_when: false
-      ignore_errors: "{{ environment_list | length > 1 }}"
-
-    - name: Save new checksum after build
-      ansible.builtin.copy:
-        dest: "/tmp/ee-build-{{ item }}/.last_build_checksum"
-        content: >-
-          {{
-            ee_yml_stat.results
-              | selectattr('item', 'equalto', item)
-              | map(attribute='stat.checksum')
-              | first | default('')
-          }}
-        mode: '0644'
-      loop: "{{ environment_list }}"
-      loop_control:
-        label: "{{ item }}"
-      failed_when: false
-
-
-    - name: Show environment_list and env_item before build
-      ansible.builtin.debug:
-        msg: |
-          env_item: {{ env_item | default('UNDEFINED') }}
-          environment_list: {{ environment_list }}
-      loop: "{{ environment_list }}"
-      loop_control:
-        label: "{{ env_item }}"
-        loop_var: env_item
-
-    - name: Check for user namespace error in build log
-      ansible.builtin.shell: |
-        grep -q 'newuidmap.*Permission denied' /tmp/ee-build-{{ env_item }}/build.log && echo 'fail' || echo 'ok'
-      register: ns_check
-      changed_when: false
-      failed_when: false
-      loop: "{{ environment_list }}"
-      loop_control:
-        label: "{{ env_item }}"
-        loop_var: env_item
-
-    - name: Fallback to sudo podman build if user namespace error detected
-      ansible.builtin.shell: |
-        sudo ansible-builder build \
-          --prune \
-          --build-arg ANSIBLE_GALAXY_CLI_COLLECTION_OPTS=--ignore-certs \
-          --container-runtime {{ container_runtime | default('podman') }} \
-          --file /tmp/ee-build-{{ env_item }}/execution-environment.yml \
-          --tag {{ env_item }}:{{ build_timestamp }} \
-          --verbosity 3 > /tmp/ee-build-{{ env_item }}/build.log 2>&1
-      args:
-        chdir: "/tmp/ee-build-{{ env_item }}"
-      environment:
-        PATH: "/usr/bin:/bin:/usr/sbin:/sbin:{{ lookup('env', 'PATH') }}"
-      register: build_result_sudo
-      failed_when: false
-      loop: "{{ environment_list }}"
-      loop_control:
-        label: "{{ env_item }}"
-        loop_var: env_item
-      when:
-        - (ns_check.results | selectattr('env_item', 'equalto', env_item) | list | length > 0 and
-           (ns_check.results | selectattr('env_item', 'equalto', env_item) | map(attribute='stdout') | first | default('ok')) == 'fail')
-
-
-    - name: Show failed build logs summary
-      ansible.builtin.shell: |
-        echo "\nFAILED BUILDS LOG SUMMARY:"
-        for env in {{ environment_list | join(' ') }}; do
-          if grep -q 'failed\|error\|traceback' /tmp/ee-build-$env/build.log; then
-            echo "  - $env: /tmp/ee-build-$env/build.log"
-          fi
-        done
-      args:
-        executable: /bin/bash
-      changed_when: false
-      failed_when: false
-
-    - name: Collect build results for report
-      set_fact:
-        build_report: >-
-          {{
-            (build_report | default({}))
-            | combine({
-                item: {
-                  'built': (
-                    (
-                      ee_yml_stat.results
-                        | selectattr('item', 'equalto', item)
-                        | map(attribute='stat.checksum')
-                        | first | default('')
-                    ) != (
-                      last_build_checksum_stat.results
-                        | selectattr('item', 'equalto', item)
-                        | map(attribute='stat.checksum')
-                        | first | default('')
-                    )
-                  ),
-                  'log': "/tmp/ee-build-{{ item }}/build.log"
-                }
-              })
-          }}
-      loop: "{{ environment_list }}"
-      loop_control:
-        label: "{{ item }}"
+      register: build_results
+      failed_when: build_results.rc != 0
 
     - name: Show build summary report
       ansible.builtin.debug:
         msg: |
           Build Summary:
-          {% for env, result in build_report.items() %}
-            - {{ env }}: {% if result.built %}UPDATED/CREATED{% else %}SKIPPED (no changes){% endif %} (log: {{ result.log }})
+          {% for idx in range(environment_list|length) %}
+            - {{ environment_list[idx] }}: {% if build_results.results[idx].rc == 0 %}SUCCESS{% else %}FAILED{% endif %} (see {{ ab_log }})
           {% endfor %}
