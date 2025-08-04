@@ -70,6 +70,22 @@
         rh_credentials_token: "{{ env_conf_lines | select('match', '^RH_CREDENTIALS_TOKEN=') | map('regex_replace', '^RH_CREDENTIALS_TOKEN=(.*)', '\\1') | list | first | default('') }}"
         redhat_cdn_username: "{{ env_conf_lines | select('match', '^REDHAT_CDN_USERNAME=') | map('regex_replace', '^REDHAT_CDN_USERNAME=(.*)', '\\1') | list | first | default('') }}"
         redhat_cdn_password: "{{ env_conf_lines | select('match', '^REDHAT_CDN_PASSWORD=') | map('regex_replace', '^REDHAT_CDN_PASSWORD=(.*)', '\\1') | list | first | default('') }}"
+    
+    - name: Podman login to registry.redhat.io, fallback to registry.access.redhat.com if needed
+      block:
+        - name: Podman login to registry.redhat.io
+          ansible.builtin.shell: |
+            podman login registry.redhat.io -u "{{ redhat_cdn_username }}" -p "{{ redhat_cdn_password }}"
+          register: podman_login
+          changed_when: "'Login Succeeded' in podman_login.stdout"
+          failed_when: podman_login.rc != 0
+      rescue:
+        - name: Podman login to registry.access.redhat.com (fallback)
+          ansible.builtin.shell: |
+            podman login registry.access.redhat.com -u "{{ redhat_cdn_username }}" -p "{{ redhat_cdn_password }}"
+          register: podman_login_fallback
+          changed_when: "'Login Succeeded' in podman_login_fallback.stdout"
+          failed_when: podman_login_fallback.rc != 0
 
 - name: Build selected execution environments
   hosts: localhost
