@@ -2,3 +2,7 @@ fastapi
 uvicorn
 pydantic
 requests
+ansible-builder
+ansible-core
+ansible-creator
+ansible-collections
