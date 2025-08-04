@@ -1,6 +1,6 @@
 # Base_EE-DE_Builder
 
-## Table of Contents
+##
 
 - [Prerequisites](#prerequisites)
 - [Features](#features)
@@ -526,20 +526,27 @@ sudo chmod 644 /usr/share/applications/EE-DE_*.desktop
 sudo update-desktop-database /usr/share/applications/
 ```
 
-## Contributing
+# EE-DE_Builder Setup
 
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/amazing-feature`
-3. Commit changes: `git commit -m 'Add amazing feature'`
-4. Push to branch: `git push origin feature/amazing-feature`
-5. Open a Pull Request
+## Running the Application
 
-## License (Web UI)
+To set up and run the application, use the provided `site.yml` playbook. This playbook will ensure all required credentials are set and then build the environments.
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+**Steps:**
 
-## Support
+1. Open a terminal and navigate to the project directory:
+    ```sh
+    cd /home/sgallego/Downloads/GIT/Base_EE-DE_Builder
+    ```
 
-- Issues: Report bugs and request features via GitHub Issues
-- Documentation: Check the `/docs` directory for detailed guides
-- API Reference: Use the interactive docs at `/docs` when running
+2. Run the main playbook:
+    ```sh
+    ansible-playbook site.yml
+    ```
+
+This will automatically:
+- Prompt you for any missing credentials and store them in `~/.ansible/conf/env.conf`
+- Build the required environments
+
+**Note:**  
+If you are running these commands from a different directory, replace the path in the `cd` command with the actual path to your project directory.
