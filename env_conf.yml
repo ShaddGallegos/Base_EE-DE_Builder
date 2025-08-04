@@ -1,0 +1,80 @@
+- name: Ensure ~/.ansible/conf/env.conf contains required credentials
+  hosts: localhost
+  gather_facts: false
+  vars:
+    env_conf_dir: "{{ lookup('env', 'HOME') }}/.ansible/conf"
+    env_conf_path: "{{ env_conf_dir }}/env.conf"
+  tasks:
+    - name: Ensure ~/.ansible/conf directory exists
+      ansible.builtin.file:
+        path: "{{ env_conf_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: Ensure env.conf file exists
+      ansible.builtin.file:
+        path: "{{ env_conf_path }}"
+        state: touch
+        mode: '0600'
+
+    - name: Read env.conf
+      ansible.builtin.slurp:
+        src: "{{ env_conf_path }}"
+      register: env_conf_slurp
+
+    - name: Parse env.conf lines
+      set_fact:
+        env_conf_lines: "{{ (env_conf_slurp.content | b64decode).splitlines() }}"
+
+    - name: Set facts for existing secrets
+      set_fact:
+        rh_credentials_token: "{{ env_conf_lines | select('match', '^RH_CREDENTIALS_TOKEN=') | map('regex_replace', '^RH_CREDENTIALS_TOKEN=(.*)', '\\1') | list | first | default('') }}"
+        redhat_cdn_username: "{{ env_conf_lines | select('match', '^REDHAT_CDN_USERNAME=') | map('regex_replace', '^REDHAT_CDN_USERNAME=(.*)', '\\1') | list | first | default('') }}"
+        redhat_cdn_password: "{{ env_conf_lines | select('match', '^REDHAT_CDN_PASSWORD=') | map('regex_replace', '^REDHAT_CDN_PASSWORD=(.*)', '\\1') | list | first | default('') }}"
+
+    - name: Prompt for missing RH_CREDENTIALS_TOKEN
+      ansible.builtin.pause:
+        prompt: "Enter your Red Hat Automation Hub token"
+        echo: no
+      register: prompt_rh_token
+      when: rh_credentials_token == ""
+
+    - name: Add missing RH_CREDENTIALS_TOKEN to env.conf
+      ansible.builtin.lineinfile:
+        path: "{{ env_conf_path }}"
+        line: "RH_CREDENTIALS_TOKEN={{ prompt_rh_token.user_input }}"
+        create: yes
+        mode: '0600'
+        insertafter: EOF
+      when: rh_credentials_token == ""
+
+    - name: Prompt for missing REDHAT_CDN_USERNAME
+      ansible.builtin.pause:
+        prompt: "Enter your Red Hat CDN username"
+      register: prompt_rh_user
+      when: redhat_cdn_username == ""
+
+    - name: Add missing REDHAT_CDN_USERNAME to env.conf
+      ansible.builtin.lineinfile:
+        path: "{{ env_conf_path }}"
+        line: "REDHAT_CDN_USERNAME={{ prompt_rh_user.user_input }}"
+        create: yes
+        mode: '0600'
+        insertafter: EOF
+      when: redhat_cdn_username == ""
+
+    - name: Prompt for missing REDHAT_CDN_PASSWORD
+      ansible.builtin.pause:
+        prompt: "Enter your Red Hat CDN password"
+        echo: no
+      register: prompt_rh_pass
+      when: redhat_cdn_password == ""
+
+    - name: Add missing REDHAT_CDN_PASSWORD to env.conf
+      ansible.builtin.lineinfile:
+        path: "{{ env_conf_path }}"
+        line: "REDHAT_CDN_PASSWORD={{ prompt_rh_pass.user_input }}"
+        create: yes
+        mode: '0600'
+        insertafter: EOF
+      when: redhat_cdn_password == ""

@@ -1,21 +1,32 @@
 #!/bin/bash
-#!/usr/bin/env bash
 # EE-DE_Builder_WebUI_setup.sh
 # Sets up UI environment for EE/DE_Builder_WebUI on Fedora/RHEL
 # Logs all output to /var/log/EE-DE_Builder_WebUI.log
 
 set -euo pipefail
 
+ENV_CONF="$HOME/.ansible/conf/env.conf"
+
+# 0. Ensure ~/.ansible/conf/env.conf exists and contains all required credentials.
+if [ ! -f "$ENV_CONF" ] || \
+   ! grep -q '^RH_CREDENTIALS_TOKEN=' "$ENV_CONF" || \
+   ! grep -q '^REDHAT_CDN_USERNAME=' "$ENV_CONF" || \
+   ! grep -q '^REDHAT_CDN_PASSWORD=' "$ENV_CONF" ]; then
+    echo "env.conf missing or incomplete. Running env_conf.yml to set credentials..."
+    ansible-playbook "$(dirname "$0")/env_conf.yml"
+fi
+
+# Load variables for use in the script
+source "$ENV_CONF"
 
 # Get current working directory (should be the project root)
 PROJECT_ROOT="$(pwd)"
 LAUNCHERS_DIR="$PROJECT_ROOT/Launchers"
-
 LOG="/var/log/EE-DE_Builder_WebUI.log"
 
 # Ensure log file exists and is writable by this user
 if [ ! -f "$LOG" ]; then
-  sudo mkdir -p "$(dirname $LOG)"
+  sudo mkdir -p "$(dirname "$LOG")"
   sudo touch "$LOG"
   sudo chown "$USER":"$USER" "$LOG"
 fi
@@ -67,12 +78,12 @@ if ! sudo dnf repolist &>/dev/null; then
 fi
 log "DNF repos reachable."
 
-# 7. Firewall: open port 3000 on all interfaces (0.0.0.0) if firewalld is active
+# 7. Firewall: open port 3000 on localhost (127.0.0.1) if firewalld is active
 if command -v firewall-cmd &>/dev/null && sudo systemctl is-active firewalld &>/dev/null; then
-  log "firewalld is active; opening port 3000/tcp on 0.0.0.0..."
+  log "firewalld is active; opening port 3000/tcp on localhost (127.0.0.1)..."
   sudo firewall-cmd --add-port=3000/tcp --permanent --zone=public
   sudo firewall-cmd --reload
-  log "Port 3000/tcp opened on all interfaces (0.0.0.0)."
+  log "Port 3000/tcp opened on localhost (127.0.0.1)."
 else
   log "firewalld not active or not installed."
 fi
@@ -139,16 +150,12 @@ for PKG in python3-pip python3.11-pip; do
   fi
 done
 
-# 14. Prompt for Red Hat quay.io login & podman auth
-log "Logging into quay.io via podman..."
-read -p "  Red Hat CDN username: " USERNAME
-read -s -p "  Red Hat CDN password: " PASSWORD
-echo
-
-if ! sudo podman login quay.io --username "$USERNAME" --password "$PASSWORD"; then
+# 14. Podman login using credentials from env.conf
+log "Logging into quay.io via podman using env.conf credentials..."
+if ! sudo podman login quay.io --username "$REDHAT_CDN_USERNAME" --password "$REDHAT_CDN_PASSWORD"; then
   log "First login attempt failed. Running podman system migrate..."
   sudo podman system migrate
-  if ! sudo podman login quay.io --username "$USERNAME" --password "$PASSWORD"; then
+  if ! sudo podman login quay.io --username "$REDHAT_CDN_USERNAME" --password "$REDHAT_CDN_PASSWORD"; then
     fail "Podman login failed after migration."
   fi
 fi
@@ -158,17 +165,9 @@ log "Podman login successful."
 log "Upgrading pip environment..."
 pip3 install --upgrade pip wheel setuptools
 
-# 16. Run UI build
-#log "Running make setup && make dev..."
-#make setup && make dev \
-#  || fail "make setup/dev failed."
-
 # 16. Run UI build as the current user (not root)
-log "Running UI build as user $USER (not root) on 0.0.0.0:3000"
-
-# Ensure we are in the project root
+log "Running UI build as user $USER (not root) on localhost:3000"
 cd "$PROJECT_ROOT"
-
 if make setup && make dev; then
   log "UI build completed successfully as user."
 else
@@ -177,11 +176,6 @@ fi
 
 # 17. Install launchers and desktop integration
 log "Installing launchers and desktop integration..."
-
-
-# Get current working directory (should be the project root)
-PROJECT_ROOT="$(pwd)"
-LAUNCHERS_DIR="$PROJECT_ROOT/Launchers"
 
 # Ensure Launchers directory exists
 if [ ! -d "$LAUNCHERS_DIR" ]; then
@@ -228,19 +222,14 @@ fi
 for desktop_file in "$LAUNCHERS_DIR"/*.desktop; do
   if [ -f "$desktop_file" ]; then
     filename=$(basename "$desktop_file")
-    
     # Skip the WebUI-App.desktop file (GUI launcher)
     if [[ "$filename" == "EE-DE_WebUI-App.desktop" ]]; then
       log "Skipping GUI launcher desktop file: $filename"
       continue
     fi
-    
     target_file="$HOME/.local/share/applications/$filename"
-    
-    # Copy desktop file and update paths to use absolute paths
     sed "s|/home/sgallego/Downloads/Base_EE-DE_Builder|$PROJECT_ROOT|g" "$desktop_file" > "$target_file"
     chmod +x "$target_file"
-    
     log "Installed desktop file: $filename"
   fi
 done
@@ -256,28 +245,21 @@ fi
 # Create desktop shortcuts if Desktop directory exists
 if [ -d "$HOME/Desktop" ]; then
   log "Desktop directory found, creating desktop shortcuts..."
-  
   for desktop_file in "$LAUNCHERS_DIR"/*.desktop; do
     if [ -f "$desktop_file" ]; then
       filename=$(basename "$desktop_file")
-      
       # Skip the WebUI-App.desktop file (GUI launcher)
       if [[ "$filename" == "EE-DE_WebUI-App.desktop" ]]; then
         log "Skipping GUI launcher desktop shortcut: $filename"
         continue
       fi
-      
       desktop_target="$HOME/Desktop/$filename"
-      
-      # Copy and update desktop file for Desktop directory
       sed "s|/home/sgallego/Downloads/Base_EE-DE_Builder|$PROJECT_ROOT|g" "$desktop_file" > "$desktop_target"
       chmod +x "$desktop_target"
-      
       # Mark as trusted (for GNOME)
       if command -v gio &>/dev/null; then
         gio set "$desktop_target" metadata::trusted true 2>/dev/null || true
       fi
-      
       log "Created desktop shortcut: $filename"
     fi
   done
@@ -287,23 +269,15 @@ fi
 
 # Create command-line launcher symlinks for headless systems
 log "Creating command-line launchers..."
-
-# Create a local bin directory if it doesn't exist
 mkdir -p "$HOME/.local/bin"
-
-# Create symlink for the Python GUI app
 if [ -f "$LAUNCHERS_DIR/EE-DE_webui_app.py" ]; then
   ln -sf "$LAUNCHERS_DIR/EE-DE_webui_app.py" "$HOME/.local/bin/ee-de-webui-app"
   log "Created command-line launcher: ee-de-webui-app"
 fi
-
-# Create symlink for the shell launcher
 if [ -f "$LAUNCHERS_DIR/launch_gui.sh" ]; then
   ln -sf "$LAUNCHERS_DIR/launch_gui.sh" "$HOME/.local/bin/ee-de-webui-gui"
   log "Created command-line launcher: ee-de-webui-gui"
 fi
-
-# Add ~/.local/bin to PATH if not already there
 if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
   echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
   log "Added ~/.local/bin to PATH in ~/.bashrc"
@@ -312,29 +286,20 @@ fi
 
 # Install to system-wide applications for headless access
 log "Installing system-wide application entries..."
-
-# Create system applications directory if it doesn't exist
 if sudo mkdir -p /usr/share/applications; then
   log "System applications directory verified"
 else
   log "WARNING: Could not create system applications directory"
 fi
-
-# Install system-wide desktop files
 for desktop_file in "$LAUNCHERS_DIR"/*.desktop; do
   if [ -f "$desktop_file" ]; then
     filename=$(basename "$desktop_file")
-    
     # Skip the WebUI-App.desktop file (GUI launcher)
     if [[ "$filename" == "EE-DE_WebUI-App.desktop" ]]; then
       log "Skipping GUI launcher system-wide installation: $filename"
       continue
     fi
-    
     system_target="/usr/share/applications/$filename"
-    
-    # Copy and update desktop file for system-wide installation
-    # First create a temporary file with updated paths, then copy with sudo
     temp_file=$(mktemp)
     if sed "s|/home/sgallego/Downloads/Base_EE-DE_Builder|$PROJECT_ROOT|g" "$desktop_file" > "$temp_file"; then
       if sudo cp "$temp_file" "$system_target" && sudo chmod 644 "$system_target"; then

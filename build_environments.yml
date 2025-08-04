@@ -1,7 +1,32 @@
-# --- Debug transformation steps for user input selection ---
-    # (Moved to correct play below)
+# --- Ensure env.conf exists and all credentials are set (RUN THIS FIRST) ---
+- name: Ensure env.conf exists and all credentials are set
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Check if env.conf exists
+      stat:
+        path: "{{ lookup('env', 'HOME') }}/.ansible/conf/env.conf"
+      register: env_conf_stat
 
+    - name: Read env.conf if it exists
+      slurp:
+        src: "{{ lookup('env', 'HOME') }}/.ansible/conf/env.conf"
+      register: env_conf_slurp
+      when: env_conf_stat.stat.exists
 
+    - name: Parse env.conf for required variables
+      set_fact:
+        env_conf_lines: "{{ (env_conf_slurp.content | b64decode).splitlines() }}"
+        rh_credentials_token_val: "{{ env_conf_lines | select('match', '^RH_CREDENTIALS_TOKEN=') | map('regex_replace', '^RH_CREDENTIALS_TOKEN=(.*)', '\\1') | list | first | default('') }}"
+        redhat_cdn_username_val: "{{ env_conf_lines | select('match', '^REDHAT_CDN_USERNAME=') | map('regex_replace', '^REDHAT_CDN_USERNAME=(.*)', '\\1') | list | first | default('') }}"
+        redhat_cdn_password_val: "{{ env_conf_lines | select('match', '^REDHAT_CDN_PASSWORD=') | map('regex_replace', '^REDHAT_CDN_PASSWORD=(.*)', '\\1') | list | first | default('') }}"
+      when: env_conf_stat.stat.exists
+
+    # The following playbook import must be handled outside of tasks, so see documentation for conditional imports.
+    # If you want to conditionally run env_conf.yml, you must split your playbooks or use include_tasks/import_tasks with proper logic.
+    # - import_playbook: env_conf.yml
+
+# --- Main Playbook Logic Starts Here ---
 - name: Ensure Python 3.12 and Ansible 10+ are installed
   hosts: localhost
   become: true
@@ -138,6 +163,8 @@
         src: "{{ env_conf_path }}"
       register: env_conf_slurp
       when: env_conf_stat.stat.exists
+      tags:
+        - Read_and_parse
 
     - name: Set secrets from env.conf if available
       set_fact:
@@ -556,3 +583,23 @@
           {% for env, result in build_report.items() %}
             - {{ env }}: {% if result.built %}UPDATED/CREATED{% else %}SKIPPED (no changes){% endif %} (log: {{ result.log }})
           {% endfor %}
+
+- name: Build environments
+  hosts: localhost
+  gather_facts: false
+  vars:
+    environments_dir: "{{ playbook_dir }}/environments"
+    env_conf_path: "{{ lookup('env', 'HOME') }}/.ansible/conf/env.conf"
+  tasks:
+    - name: Read and parse ~/.ansible/conf/env.conf if it exists
+      ansible.builtin.slurp:
+        src: "{{ env_conf_path }}"
+      register: env_conf_slurp
+      tags:
+        - Read_and_parse
+
+    - name: Set secrets from env.conf
+      set_fact:
+        rh_credentials_token: "{{ (env_conf_slurp.content | b64decode).splitlines() | select('match', '^RH_CREDENTIALS_TOKEN=') | map('regex_replace', '^RH_CREDENTIALS_TOKEN=(.*)', '\\1') | list | first | default('') }}"
+        redhat_cdn_username: "{{ (env_conf_slurp.content | b64decode).splitlines() | select('match', '^REDHAT_CDN_USERNAME=') | map('regex_replace', '^REDHAT_CDN_USERNAME=(.*)', '\\1') | list | first | default('') }}"
+        redhat_cdn_password: "{{ (env_conf_slurp.content | b64decode).splitlines() | select('match', '^REDHAT_CDN_PASSWORD=') | map('regex_replace', '^REDHAT_CDN_PASSWORD=(.*)', '\\1') | list | first | default('') }}"
