@@ -43,6 +43,22 @@
         extra_args: --user
       when: ab_check.rc != 0
 
+    - name: Install Python requirements.txt from playbook_dir if present
+      ansible.builtin.shell: |
+        if [ -f "{{ playbook_dir }}/requirements.txt" ]; then
+          pip3 install --user -r "{{ playbook_dir }}/requirements.txt"
+        fi
+      args:
+        executable: /bin/bash
+
+    - name: Install Ansible requirements.yml from playbook_dir if present
+      ansible.builtin.shell: |
+        if [ -f "{{ playbook_dir }}/requirements.yml" ]; then
+          ansible-galaxy install -r "{{ playbook_dir }}/requirements.yml" --force
+        fi
+      args:
+        executable: /bin/bash      
+
     - name: Ensure ~/.ansible/conf directory exists
       file:
         path: "{{ lookup('env', 'HOME') }}/.ansible/conf"
