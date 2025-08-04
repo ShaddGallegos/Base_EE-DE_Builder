@@ -1,5 +1,0 @@
-collections:
-  - name: ansible.builtin
-  - name: community.general
-  - name: containers.podman
-  - name: ansible.posix
