@@ -1,6 +1,11 @@
 - name: Ensure ~/.ansible/conf/env.conf contains required credentials
   hosts: localhost
   gather_facts: false
+  vars:
+    env_conf_dir: "{{ lookup('env', 'HOME') }}/.ansible/conf"
+    env_conf_path: "{{ env_conf_dir }}/env.conf"
+    ansible_python_interpreter: /usr/bin/python3
+    
   pre_tasks:
     # Podman rootless setup (optional, keep if you want to fix rootless in the future)
     - name: Ensure user has subuid mapping for rootless Podman

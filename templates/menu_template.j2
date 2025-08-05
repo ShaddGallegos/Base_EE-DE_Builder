@@ -1,0 +1,8 @@
++============================+
+|   ENVIRONMENT SELECTION    |
++============================+
+{% for env in available_environments %}
+| {{ loop.index | string | center(2) }}. {{ env | ljust(20) }} |
+{% endfor %}
+| {{ (available_environments | length + 1) | string | center(2) }}. ALL ENVIRONMENTS        |
++============================+
