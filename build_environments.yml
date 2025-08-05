@@ -68,10 +68,22 @@
       become: true
       ansible.builtin.dnf:
         name:
+          - ansible-core
           - python3
           - python3-pip
           - python3.11
           - python3.11-pip
+          - git
+          - podman
+          - rpm-build
+          - gcc
+          - make
+          - libffi-devel
+          - openssl-devel
+          - python3-devel
+          - jq
+          - libselinux-python3
+          - redhat-rpm-config
         state: present
         update_cache: true
 
@@ -86,19 +98,33 @@
         state: latest
         extra_args: --user
         executable: pip3
+      ignore_errors: true
 
-    - name: Ensure required Python packages are installed
+    - name: Upgrade pip and install required Python packages
       ansible.builtin.pip:
         name:
+          - ansible
+          - ansible-builder
+          - ansible-lint
+          - ansible-dev-tools
+          - molecule
+          - pytest
+          - requests
           - fastapi
           - uvicorn
           - pydantic
-          - requests
-          - ansible-builder
-          - ansible-dev-tools
-          - ansible-core
+          - jinja2
+          - pyyaml
+          - tox
+          - pre-commit
+          - black
+          - flake8
+          - docker-compose
+          - virtualenv
+        state: latest
         extra_args: --user
         executable: pip3
+      ignore_errors: true
 
     - name: Ensure community.general collection is installed
       ansible.builtin.shell: ansible-galaxy collection install community.general --force
