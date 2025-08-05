@@ -5,9 +5,37 @@
     env_conf_dir: "{{ lookup('env', 'HOME') }}/.ansible/conf"
     env_conf_path: "{{ env_conf_dir }}/env.conf"
     ansible_python_interpreter: /usr/bin/python3
+    REDHAT_CDN_USERNAME: "{{ lookup('env', 'REDHAT_CDN_USERNAME') }}"
+    REDHAT_CDN_PASSWORD: "{{ lookup('env', 'REDHAT_CDN_PASSWORD') }}"
+    repos_to_enable:
+      - ansible-automation-platform-2.5-for-rhel-9-x86_64-rpms
+      - rhel-9-for-x86_64-baseos-rpms
+      - rhel-9-for-x86_64-appstream-rpms
+      - codeready-builder-for-rhel-9-x86_64-rpms
+      - rhel-9-for-x86_64-supplementary-rpms
     
     
   pre_tasks:
+    - name: Register the system with Red Hat Subscription Manager
+      become: true
+      community.general.redhat_subscription:
+        state: present
+        username: "{{ redhat_cdn_username }}"
+        password: "{{ redhat_cdn_password }}"
+
+    - name: Enable required Red Hat repositories
+      community.general.rhsm_repository:
+        name: "{{ item }}"
+        state: enabled
+      loop: "{{ repos_to_enable }}"
+      ignore_errors: true
+      
+    - name: Find all RHEL environment directories
+      ansible.builtin.find:
+        paths: "{{ environments_dir }}"
+        file_type: directory
+        excludes: ".*"
+      register: found_rhel_dirs
     - name: Ensure user has subuid mapping for rootless Podman
       become: true
       ansible.builtin.lineinfile:
@@ -178,38 +206,8 @@
     env_conf_path: "{{ lookup('env', 'HOME') }}/.ansible/conf/env.conf"
     ab_log: "/var/log/ansible-builder.log"
     build_tag: "{{ lookup('pipe', 'date +%Y%m%d-%H%M%S') }}"
-    REDHAT_CDN_USERNAME: "{{ lookup('env', 'REDHAT_CDN_USERNAME') }}"
-    REDHAT_CDN_PASSWORD: "{{ lookup('env', 'REDHAT_CDN_PASSWORD') }}"
-    repos_to_enable:
-      - ansible-automation-platform-2.5-for-rhel-9-x86_64-rpms
-      - rhel-9-for-x86_64-baseos-rpms
-      - rhel-9-for-x86_64-appstream-rpms
-      - codeready-builder-for-rhel-9-x86_64-rpms
-      - rhel-9-for-x86_64-supplementary-rpms
-
 
   tasks:
-    - name: Register the system with Red Hat Subscription Manager
-      become: true
-      community.general.redhat_subscription:
-        state: present
-        username: "{{ redhat_cdn_username }}"
-        password: "{{ redhat_cdn_password }}"
-
-    - name: Enable required Red Hat repositories
-      community.general.rhsm_repository:
-        name: "{{ item }}"
-        state: enabled
-      loop: "{{ repos_to_enable }}"
-      ignore_errors: true
-      
-    - name: Find all RHEL environment directories
-      ansible.builtin.find:
-        paths: "{{ environments_dir }}"
-        file_type: directory
-        excludes: ".*"
-      register: found_rhel_dirs
-
     - name: Filter only directories with 'rhel' in the name
       set_fact:
         rhel_dirs: "{{ found_rhel_dirs.files | selectattr('path', 'search', 'rhel') | list | sort(attribute='path') }}"
