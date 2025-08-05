@@ -1,20 +1,18 @@
-- name: Ensure ~/.ansible/conf/env.conf contains required credentials
+- name: Ensure ~/.ansible/conf.env.conf contains required credentials
   hosts: localhost
   gather_facts: false
   vars:
     env_conf_dir: "{{ lookup('env', 'HOME') }}/.ansible/conf"
     env_conf_path: "{{ env_conf_dir }}/env.conf"
     ansible_python_interpreter: /usr/bin/python3
-    REDHAT_CDN_USERNAME: "{{ lookup('env', 'REDHAT_CDN_USERNAME') }}"
-    REDHAT_CDN_PASSWORD: "{{ lookup('env', 'REDHAT_CDN_PASSWORD') }}"
     repos_to_enable:
       - ansible-automation-platform-2.5-for-rhel-9-x86_64-rpms
       - rhel-9-for-x86_64-baseos-rpms
       - rhel-9-for-x86_64-appstream-rpms
       - codeready-builder-for-rhel-9-x86_64-rpms
       - rhel-9-for-x86_64-supplementary-rpms
-    
-    
+    environments_dir: "{{ playbook_dir }}/environments"
+
   pre_tasks:
     - name: Register the system with Red Hat Subscription Manager
       become: true
@@ -24,6 +22,7 @@
         password: "{{ redhat_cdn_password }}"
 
     - name: Enable required Red Hat repositories
+      become: true
       community.general.rhsm_repository:
         name: "{{ item }}"
         state: enabled
