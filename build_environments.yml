@@ -14,6 +14,11 @@
     environments_dir: "{{ playbook_dir }}/environments"
 
   pre_tasks:
+    - name: Ensure community.general collection is installed
+      ansible.builtin.shell: ansible-galaxy collection install community.general --force
+      args:
+        executable: /bin/bash
+
     - name: Register the system with Red Hat Subscription Manager
       become: true
       community.general.redhat_subscription:
@@ -125,11 +130,6 @@
         extra_args: --user
         executable: pip3
       ignore_errors: true
-
-    - name: Ensure community.general collection is installed
-      ansible.builtin.shell: ansible-galaxy collection install community.general --force
-      args:
-        executable: /bin/bash
 
     # Credentials logic
     - name: Ensure ~/.ansible/conf directory exists
