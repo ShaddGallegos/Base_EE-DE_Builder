@@ -199,6 +199,14 @@
         executable: pip3
       ignore_errors: true
 
+    - name: Install ansible-builder system-wide for root user
+      become: true
+      ansible.builtin.pip:
+        name:
+          - ansible-builder
+        state: latest
+        executable: pip3
+
     # Install collections after credentials are configured
     - name: Ensure community.general collection is installed
       ansible.builtin.shell: ansible-galaxy collection install community.general --force
@@ -348,7 +356,7 @@
       become: true
       ansible.builtin.shell: |
         echo "=== Building {{ item }} at $(date) ===" | tee -a {{ ab_log }}
-        ansible-builder build \
+        /usr/local/bin/ansible-builder build \
           --container-runtime podman \
           --file execution-environment.yml \
           --tag {{ item }}:{{ build_tag }} \
