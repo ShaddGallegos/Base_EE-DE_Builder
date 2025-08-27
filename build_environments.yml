@@ -14,10 +14,78 @@
     environments_dir: "{{ playbook_dir }}/environments"
 
   pre_tasks:
-    - name: Ensure community.general collection is installed
-      ansible.builtin.shell: ansible-galaxy collection install community.general --force
-      args:
-        executable: /bin/bash
+    # Credentials logic - moved to beginning
+    - name: Ensure ~/.ansible/conf directory exists
+      file:
+        path: "{{ lookup('env', 'HOME') }}/.ansible/conf"
+        state: directory
+        mode: '0700'
+
+    - name: Ensure env.conf file exists
+      copy:
+        dest: "{{ lookup('env', 'HOME') }}/.ansible/conf/env.conf"
+        content: ""
+        force: no
+        mode: '0600'
+
+    - name: Read env.conf
+      slurp:
+        src: "{{ lookup('env', 'HOME') }}/.ansible/conf/env.conf"
+      register: env_conf_slurp
+
+    - name: Parse env.conf lines
+      set_fact:
+        env_conf_lines: "{{ (env_conf_slurp.content | b64decode).splitlines() }}"
+
+    - name: Set facts for existing secrets
+      set_fact:
+        rh_credentials_token: "{{ env_conf_lines | select('match', '^RH_CREDENTIALS_TOKEN=') | map('regex_replace', '^RH_CREDENTIALS_TOKEN=(.*)', '\\1') | list | first | default('') }}"
+        redhat_cdn_username: "{{ env_conf_lines | select('match', '^REDHAT_CDN_USERNAME=') | map('regex_replace', '^REDHAT_CDN_USERNAME=(.*)', '\\1') | list | first | default('') }}"
+        redhat_cdn_password: "{{ env_conf_lines | select('match', '^REDHAT_CDN_PASSWORD=') | map('regex_replace', '^REDHAT_CDN_PASSWORD=(.*)', '\\1') | list | first | default('') }}"
+
+    - name: Prompt for Red Hat CDN username if not set
+      ansible.builtin.pause:
+        prompt: "Enter your Red Hat CDN username:"
+      register: cdn_username_prompt
+      when: redhat_cdn_username == ""
+
+    - name: Set fact for Red Hat CDN username from prompt
+      set_fact:
+        redhat_cdn_username: "{{ cdn_username_prompt.user_input }}"
+      when: redhat_cdn_username == ""
+
+    - name: Prompt for Red Hat CDN password if not set
+      ansible.builtin.pause:
+        prompt: "Enter your Red Hat CDN password:"
+        echo: no
+      register: cdn_password_prompt
+      when: redhat_cdn_password == ""
+
+    - name: Set fact for Red Hat CDN password from prompt
+      set_fact:
+        redhat_cdn_password: "{{ cdn_password_prompt.user_input }}"
+      when: redhat_cdn_password == ""
+
+    - name: Prompt for RH_CREDENTIALS_TOKEN if not set
+      ansible.builtin.pause:
+        prompt: "Enter your RH_CREDENTIALS_TOKEN (for ansible.cfg):"
+        echo: no
+      register: rh_token_prompt
+      when: rh_credentials_token == ""
+
+    - name: Set fact for RH_CREDENTIALS_TOKEN from prompt
+      set_fact:
+        rh_credentials_token: "{{ rh_token_prompt.user_input }}"
+      when: rh_credentials_token == ""
+
+    - name: Update env.conf with any new values
+      copy:
+        dest: "{{ lookup('env', 'HOME') }}/.ansible/conf/env.conf"
+        content: |
+          RH_CREDENTIALS_TOKEN={{ rh_credentials_token }}
+          REDHAT_CDN_USERNAME={{ redhat_cdn_username }}
+          REDHAT_CDN_PASSWORD={{ redhat_cdn_password }}
+        mode: '0600'
 
     - name: Register the system with Red Hat Subscription Manager
       become: true
@@ -131,78 +199,31 @@
         executable: pip3
       ignore_errors: true
 
-    # Credentials logic
-    - name: Ensure ~/.ansible/conf directory exists
-      file:
-        path: "{{ lookup('env', 'HOME') }}/.ansible/conf"
-        state: directory
-        mode: '0700'
+    # Install collections after credentials are configured
+    - name: Ensure community.general collection is installed
+      ansible.builtin.shell: ansible-galaxy collection install community.general --force
+      args:
+        executable: /bin/bash
+      environment:
+        ANSIBLE_GALAXY_TOKEN: "{{ rh_credentials_token }}"
+      ignore_errors: true
+      register: collection_install_result
 
-    - name: Ensure env.conf file exists
-      copy:
-        dest: "{{ lookup('env', 'HOME') }}/.ansible/conf/env.conf"
-        content: ""
-        force: no
-        mode: '0600'
+    - name: Display collection install result if failed
+      ansible.builtin.debug:
+        msg: |
+          Collection install result: {{ collection_install_result.rc }}
+          Warning: community.general collection installation failed, but continuing...
+          This may affect some tasks but won't prevent the build from proceeding.
+      when: collection_install_result.rc != 0
 
-    - name: Read env.conf
-      slurp:
-        src: "{{ lookup('env', 'HOME') }}/.ansible/conf/env.conf"
-      register: env_conf_slurp
-
-    - name: Parse env.conf lines
-      set_fact:
-        env_conf_lines: "{{ (env_conf_slurp.content | b64decode).splitlines() }}"
-
-    - name: Set facts for existing secrets
-      set_fact:
-        rh_credentials_token: "{{ env_conf_lines | select('match', '^RH_CREDENTIALS_TOKEN=') | map('regex_replace', '^RH_CREDENTIALS_TOKEN=(.*)', '\\1') | list | first | default('') }}"
-        redhat_cdn_username: "{{ env_conf_lines | select('match', '^REDHAT_CDN_USERNAME=') | map('regex_replace', '^REDHAT_CDN_USERNAME=(.*)', '\\1') | list | first | default('') }}"
-        redhat_cdn_password: "{{ env_conf_lines | select('match', '^REDHAT_CDN_PASSWORD=') | map('regex_replace', '^REDHAT_CDN_PASSWORD=(.*)', '\\1') | list | first | default('') }}"
-
-    - name: Prompt for Red Hat CDN username if not set
-      ansible.builtin.pause:
-        prompt: "Enter your Red Hat CDN username:"
-      register: cdn_username_prompt
-      when: redhat_cdn_username == ""
-
-    - name: Set fact for Red Hat CDN username from prompt
-      set_fact:
-        redhat_cdn_username: "{{ cdn_username_prompt.user_input }}"
-      when: redhat_cdn_username == ""
-
-    - name: Prompt for Red Hat CDN password if not set
-      ansible.builtin.pause:
-        prompt: "Enter your Red Hat CDN password:"
-        echo: no
-      register: cdn_password_prompt
-      when: redhat_cdn_password == ""
-
-    - name: Set fact for Red Hat CDN password from prompt
-      set_fact:
-        redhat_cdn_password: "{{ cdn_password_prompt.user_input }}"
-      when: redhat_cdn_password == ""
-
-    - name: Prompt for RH_CREDENTIALS_TOKEN if not set
-      ansible.builtin.pause:
-        prompt: "Enter your RH_CREDENTIALS_TOKEN (for ansible.cfg):"
-        echo: no
-      register: rh_token_prompt
-      when: rh_credentials_token == ""
-
-    - name: Set fact for RH_CREDENTIALS_TOKEN from prompt
-      set_fact:
-        rh_credentials_token: "{{ rh_token_prompt.user_input }}"
-      when: rh_credentials_token == ""
-
-    - name: Update env.conf with any new values
-      copy:
-        dest: "{{ lookup('env', 'HOME') }}/.ansible/conf/env.conf"
-        content: |
-          RH_CREDENTIALS_TOKEN={{ rh_credentials_token }}
-          REDHAT_CDN_USERNAME={{ redhat_cdn_username }}
-          REDHAT_CDN_PASSWORD={{ redhat_cdn_password }}
-        mode: '0600'
+    - name: Try installing ansible-collection-community-general from system packages as fallback
+      become: true
+      ansible.builtin.dnf:
+        name: ansible-collection-community-general
+        state: present
+      ignore_errors: true
+      when: collection_install_result.rc != 0
 
     # Podman login (run as root to avoid rootless errors)
     - name: Podman login to registry.redhat.io, fallback to registry.access.redhat.com if needed
