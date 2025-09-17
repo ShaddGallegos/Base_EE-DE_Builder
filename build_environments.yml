@@ -1,0 +1,423 @@
+- name: Ensure ~/.ansible/conf.env.conf contains required credentials
+  hosts: localhost
+  gather_facts: false
+  vars:
+    env_conf_dir: "{{ lookup('env', 'HOME') }}/.ansible/conf"
+    env_conf_path: "{{ env_conf_dir }}/env.conf"
+    ansible_python_interpreter: /usr/bin/python3
+    repos_to_enable:
+      - ansible-automation-platform-2.5-for-rhel-9-x86_64-rpms
+      - rhel-9-for-x86_64-baseos-rpms
+      - rhel-9-for-x86_64-appstream-rpms
+      - codeready-builder-for-rhel-9-x86_64-rpms
+      - rhel-9-for-x86_64-supplementary-rpms
+    environments_dir: "{{ playbook_dir }}/environments"
+
+  pre_tasks:
+    - name: Ensure community.general collection is installed
+      ansible.builtin.shell: ansible-galaxy collection install community.general --force
+      args:
+        executable: /bin/bash
+
+    - name: Check if system is RHEL
+      ansible.builtin.command: grep -q "Red Hat Enterprise Linux" /etc/os-release
+      register: is_rhel
+      failed_when: false
+      changed_when: false
+      
+    - name: Check subscription-manager functionality
+      ansible.builtin.command: subscription-manager version
+      register: subscription_manager_check
+      failed_when: false
+      changed_when: false
+      when: is_rhel.rc == 0
+
+    - name: Install/repair subscription-manager if needed
+      ansible.builtin.dnf:
+        name: subscription-manager
+        state: latest
+      become: true
+      when: is_rhel.rc == 0 and subscription_manager_check.rc != 0
+
+    - name: Register the system with Red Hat Subscription Manager
+      ansible.builtin.shell: subscription-manager register --username {{ redhat_username }} --password '{{ redhat_password }}'
+      become: true
+      register: subscription_result
+      failed_when: false
+      when: is_rhel.rc == 0 and subscription_manager_check.rc == 0
+
+    - name: Show subscription status
+      ansible.builtin.debug:
+        msg: |
+          System is {{ 'RHEL' if is_rhel.rc|default(1) == 0 else 'not RHEL' }}
+          {% if subscription_result is defined and subscription_result.rc is defined %}
+          {{ 'Registered with Red Hat subscription manager.' if subscription_result.rc == 0 else
+             'Registration failed. Using podman auth for registry access.' }}
+          {% else %}
+          Registration skipped. Using podman auth for registry access.
+          {% endif %}
+
+    - name: Ensure facts are gathered
+      ansible.builtin.setup:
+        gather_subset:
+          - '!all'
+          - 'distribution'
+  
+    - name: Set OS facts
+      ansible.builtin.set_fact:
+        is_rhel_system: "{{ ansible_distribution == 'RedHat' }}"
+        using_subscription: false
+
+    - name: Notify about repository handling
+      ansible.builtin.debug:
+        msg: |
+          Running on {{ ansible_distribution }} {{ ansible_distribution_version }}
+          Will {% if not is_rhel_system %}NOT{% endif %} use subscription-manager for repositories
+          {% if not is_rhel_system %}Using alternative repository approach{% endif %}
+
+    - name: Enable required Red Hat repositories (RHEL only)
+      ansible.builtin.rhsm_repository:
+        name: "{{ item }}"
+        state: enabled
+      loop:
+        - ansible-automation-platform-2.5-for-rhel-9-x86_64-rpms
+        - rhel-9-for-x86_64-baseos-rpms
+        - rhel-9-for-x86_64-appstream-rpms
+        - codeready-builder-for-rhel-9-x86_64-rpms
+        - rhel-9-for-x86_64-supplementary-rpms
+      when: is_rhel_system
+      register: rhsm_result
+      failed_when: false
+
+    - name: Set up alternative repositories (non-RHEL)
+      block:
+        - name: Enable EPEL repository
+          ansible.builtin.dnf:
+            name: epel-release
+            state: present
+          become: true
+          
+        - name: Set up Ansible repository
+          ansible.builtin.dnf:
+            name: https://releases.ansible.com/ansible-tower/rpm/el9/ansible-tower-repo-latest-9.el9.noarch.rpm
+            state: present
+            disable_gpg_check: true
+          become: true
+          failed_when: false
+          
+        - name: Install common dependencies
+          ansible.builtin.dnf:
+            name:
+              - podman
+              - buildah
+              - skopeo
+              - git
+              - python3-pip
+              - python3-devel
+              - make
+              - gcc
+            state: present
+          become: true
+      when: not is_rhel_system
+
+    - name: Find all RHEL environment directories
+      ansible.builtin.find:
+        paths: "{{ environments_dir }}"
+        file_type: directory
+        excludes: ".*"
+      register: found_rhel_dirs
+    - name: Ensure user has subuid mapping for rootless Podman
+      become: true
+      ansible.builtin.lineinfile:
+        path: /etc/subuid
+        line: "{{ lookup('env','USER') }}:100000:65536"
+        create: yes
+        state: present
+
+    - name: Ensure user has subgid mapping for rootless Podman
+      become: true
+      ansible.builtin.lineinfile:
+        path: /etc/subgid
+        line: "{{ lookup('env','USER') }}:100000:65536"
+        create: yes
+        state: present
+
+    - name: Ensure /usr/bin/newuidmap is setuid root
+      become: true
+      ansible.builtin.file:
+        path: /usr/bin/newuidmap
+        mode: '4755'
+
+    - name: Ensure /usr/bin/newgidmap is setuid root
+      become: true
+      ansible.builtin.file:
+        path: /usr/bin/newgidmap
+        mode: '4755'
+
+    # Python and Ansible requirements
+    - name: Ensure python3, python3-pip, python3.11, and python3.11-pip are installed
+      become: true
+      ansible.builtin.dnf:
+        name:
+          - ansible-core
+          - python3
+          - python3-pip
+          - python3.11
+          - python3.11-pip
+          - git
+          - podman
+          - rpm-build
+          - gcc
+          - make
+          - libffi-devel
+          - openssl-devel
+          - python3-devel
+          - jq
+          - libselinux-python3
+          - redhat-rpm-config
+        state: present
+        update_cache: true
+
+    - name: Upgrade pip, setuptools, wheel, six, and install jmespath
+      ansible.builtin.pip:
+        name:
+          - pip
+          - setuptools
+          - wheel
+          - six
+          - jmespath
+        state: latest
+        extra_args: --user
+        executable: pip3
+      ignore_errors: true
+
+    - name: Upgrade pip and install required Python packages
+      ansible.builtin.pip:
+        name:
+          - ansible-dev-tools
+        state: latest
+        extra_args: --user
+        executable: pip3
+      ignore_errors: true
+
+    # Credentials logic
+    - name: Ensure ~/.ansible/conf directory exists
+      file:
+        path: "{{ lookup('env', 'HOME') }}/.ansible/conf"
+        state: directory
+        mode: '0700'
+
+    - name: Ensure env.conf file exists
+      copy:
+        dest: "{{ lookup('env', 'HOME') }}/.ansible/conf/env.conf"
+        content: ""
+        force: no
+        mode: '0600'
+
+    - name: Read env.conf
+      slurp:
+        src: "{{ lookup('env', 'HOME') }}/.ansible/conf/env.conf"
+      register: env_conf_slurp
+
+    - name: Parse env.conf lines
+      set_fact:
+        env_conf_lines: "{{ (env_conf_slurp.content | b64decode).splitlines() }}"
+
+    - name: Set facts for existing secrets
+      set_fact:
+        rh_credentials_token: "{{ env_conf_lines | select('match', '^RH_CREDENTIALS_TOKEN=') | map('regex_replace', '^RH_CREDENTIALS_TOKEN=(.*)', '\\1') | list | first | default('') }}"
+        redhat_cdn_username: "{{ env_conf_lines | select('match', '^REDHAT_CDN_USERNAME=') | map('regex_replace', '^REDHAT_CDN_USERNAME=(.*)', '\\1') | list | first | default('') }}"
+        redhat_cdn_password: "{{ env_conf_lines | select('match', '^REDHAT_CDN_PASSWORD=') | map('regex_replace', '^REDHAT_CDN_PASSWORD=(.*)', '\\1') | list | first | default('') }}"
+
+    - name: Prompt for Red Hat CDN username if not set
+      ansible.builtin.pause:
+        prompt: "Enter your Red Hat CDN username:"
+      register: cdn_username_prompt
+      when: redhat_cdn_username == ""
+
+    - name: Set fact for Red Hat CDN username from prompt
+      set_fact:
+        redhat_cdn_username: "{{ cdn_username_prompt.user_input }}"
+      when: redhat_cdn_username == ""
+
+    - name: Prompt for Red Hat CDN password if not set
+      ansible.builtin.pause:
+        prompt: "Enter your Red Hat CDN password:"
+        echo: no
+      register: cdn_password_prompt
+      when: redhat_cdn_password == ""
+
+    - name: Set fact for Red Hat CDN password from prompt
+      set_fact:
+        redhat_cdn_password: "{{ cdn_password_prompt.user_input }}"
+      when: redhat_cdn_password == ""
+
+    - name: Prompt for RH_CREDENTIALS_TOKEN if not set
+      ansible.builtin.pause:
+        prompt: "Enter your RH_CREDENTIALS_TOKEN (for ansible.cfg):"
+        echo: no
+      register: rh_token_prompt
+      when: rh_credentials_token == ""
+
+    - name: Set fact for RH_CREDENTIALS_TOKEN from prompt
+      set_fact:
+        rh_credentials_token: "{{ rh_token_prompt.user_input }}"
+      when: rh_credentials_token == ""
+
+    - name: Update env.conf with any new values
+      copy:
+        dest: "{{ lookup('env', 'HOME') }}/.ansible/conf/env.conf"
+        content: |
+          RH_CREDENTIALS_TOKEN={{ rh_credentials_token }}
+          REDHAT_CDN_USERNAME={{ redhat_cdn_username }}
+          REDHAT_CDN_PASSWORD={{ redhat_cdn_password }}
+        mode: '0600'
+
+    - name: Podman login to registry.redhat.io, fallback to registry.access.redhat.com if needed
+      block:
+        - name: Podman login to registry.redhat.io
+          become: true
+          ansible.builtin.shell: |
+            podman login registry.redhat.io -u "{{ redhat_cdn_username }}" -p "{{ redhat_cdn_password }}"
+          register: podman_login
+          changed_when: "'Login Succeeded' in podman_login.stdout"
+          failed_when: podman_login.rc != 0
+      rescue:
+        - name: Podman login to registry.access.redhat.com (fallback)
+          become: true
+          ansible.builtin.shell: |
+            podman login registry.access.redhat.com -u "{{ redhat_cdn_username }}" -p "{{ redhat_cdn_password }}"
+          register: podman_login_fallback
+          changed_when: "'Login Succeeded' in podman_login_fallback.stdout"
+          failed_when: podman_login_fallback.rc != 0
+
+- name: Build selected execution environments
+  hosts: localhost
+  gather_facts: false
+  vars:
+    environments_dir: "{{ playbook_dir }}/environments"
+    env_conf_path: "{{ lookup('env', 'HOME') }}/.ansible/conf/env.conf"
+    ab_log: "/var/log/ansible-builder.log"
+    build_tag: "{{ lookup('pipe', 'date +%Y%m%d-%H%M%S') }}"
+
+  tasks:
+    - name: Filter only directories with 'rhel' in the name
+      set_fact:
+        rhel_dirs: "{{ found_rhel_dirs.files | selectattr('path', 'search', 'rhel') | list | sort(attribute='path') }}"
+
+    - name: Build menu options as a list of lines (for vertical display)
+      vars:
+        menu_lines: |
+          {% set lines = ['rhel_environments:'] %}
+          {% for dir in rhel_dirs | map(attribute='path') | map('basename') | list %}
+          {% set _ = lines.append(loop.index|string + '. ' + dir) %}
+          {% endfor %}
+          {% set _ = lines.append((rhel_dirs|length + 1)|string + '. ALL') %}
+          {% set _ = lines.append("This menu accepts a single selection or a ',' separated list.") %}
+          {% set _ = lines.append(':') %}
+          {{ lines }}
+      set_fact:
+        menu_options_lines: "{{ menu_lines }}"
+
+    - name: Display menu options
+      ansible.builtin.debug:
+        msg: "{{ menu_options_lines }}"
+
+    - name: Prompt user for environment selection
+      ansible.builtin.pause:
+        prompt: |
+          Enter comma-separated numbers (e.g. 1,3,4) or '{{ rhel_dirs|length + 1 }}' for all:
+      register: user_selection
+
+    - name: Set environment_list to all if user selects 'all' or N+1
+      set_fact:
+        environment_list: "{{ rhel_dirs | map(attribute='path') | map('basename') | list }}"
+      when: user_selection.user_input | trim | lower == 'all' or user_selection.user_input | trim == (rhel_dirs|length + 1)|string
+
+    - name: Set environment_list to selected items if user provides a list
+      set_fact:
+        environment_list: >-
+          {{ rhel_dirs | map(attribute='path') | map('basename') | list | zip(range(1, rhel_dirs|length + 1)) | selectattr('1', 'in', user_selection.user_input.replace(' ', '').split(',') | map('int') | list) | map('first') | list }}
+      when: user_selection.user_input | trim | lower != 'all' and user_selection.user_input | trim != (rhel_dirs|length + 1)|string
+
+    - name: Debug selected environment list
+      ansible.builtin.debug:
+        msg: |
+          Environments selected for build:
+          {{ environment_list | map('string') | join('\n  - ') | regex_replace('^', '  - ') }}
+
+    - name: Check for execution-environment.yml in each environment
+      ansible.builtin.stat:
+        path: "{{ environments_dir }}/{{ item }}/execution-environment.yml"
+      register: ee_yml_check
+      loop: "{{ environment_list }}"
+
+    - name: Fail if execution-environment.yml is missing
+      ansible.builtin.fail:
+        msg: "Missing execution-environment.yml in {{ environments_dir }}/{{ item.item }}"
+      loop: "{{ ee_yml_check.results }}"
+      when: not item.stat.exists
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Clean up old /tmp/ee-build-{{ item }} as root
+      become: true
+      ansible.builtin.file:
+        path: "/tmp/ee-build-{{ item }}"
+        state: absent
+      loop: "{{ environment_list }}"
+      ignore_errors: true
+
+    - name: Prepare /tmp build context for each environment
+      ansible.builtin.shell: |
+        mkdir -p /tmp/ee-build-{{ item }}
+        cp -a {{ environments_dir }}/{{ item }}/* /tmp/ee-build-{{ item }}/
+      loop: "{{ environment_list }}"
+      changed_when: true
+
+    - name: Template ansible.cfg into build context
+      ansible.builtin.template:
+        src: templates/ansible.cfg.j2
+        dest: "/tmp/ee-build-{{ item }}/ansible.cfg"
+        mode: '0644'
+      loop: "{{ environment_list }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Ensure ansible-builder log file exists and is writable
+      become: true
+      ansible.builtin.file:
+        path: "{{ ab_log }}"
+        state: touch
+        mode: '0666'
+
+    - name: Build execution environment with ansible-builder
+      become: true
+      ansible.builtin.shell: |
+        echo "=== Building {{ item }} at $(date) ===" | tee -a {{ ab_log }}
+        ansible-builder build \
+          --container-runtime podman \
+          --file execution-environment.yml \
+          --tag {{ item }}:{{ build_tag }} \
+          --prune \
+          --verbosity 3 2>&1 | tee -a {{ ab_log }}
+        echo "=== Done {{ item }} at $(date) ===" | tee -a {{ ab_log }}
+        podman image ls -a | grep '<none>' | awk '{print $3}' | xargs podman rmi -f || true
+      args:
+        chdir: "/tmp/ee-build-{{ item }}"
+        executable: /bin/bash
+      environment:
+        PATH: "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:{{ lookup('env', 'PATH') }}"
+      loop: "{{ environment_list }}"
+      loop_control:
+        label: "{{ item }}"
+      register: build_results
+      failed_when: build_results.rc != 0
+
+    - name: Show build summary report
+      ansible.builtin.debug:
+        msg: |
+          Build Summary:
+          {% for idx in range(environment_list|length) %}
+            - {{ environment_list[idx] }}: {% if build_results.results[idx].rc == 0 %}SUCCESS{% else %}FAILED{% endif %} (see {{ ab_log }})
+          {% endfor %}

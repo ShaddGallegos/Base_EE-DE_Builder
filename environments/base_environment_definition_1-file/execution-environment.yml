@@ -1,0 +1,47 @@
+---
+version: 3
+
+images:
+  base_image:
+    name: registry.redhat.io/ansible-automation-platform-25/ee-supported-rhel9:latest
+    options: { pull_policy: missing, tls_verify: false }
+
+dependencies:
+  galaxy:
+    collections:
+      - { name: ansible.posix, version: ">=1.5.0" }
+      - { name: ansible.utils, version: ">=2.0.0" }
+      - { name: community.general, version: ">=7.0.0" }
+    roles: []
+  python_interpreter:
+    python_path: "/usr/bin/python3.11"
+  python:
+    - ansible-core>=2.15.0
+    - ansible-runner>=2.3.1
+    - cryptography>=3.1
+    - dnspython>=2.0.0
+    - ipaddress
+    - jinja2
+    - jmespath
+    - krb5
+    - lxml
+    - ovirt_engine_sdk_python>=4.5.0
+    - ovirt_imageio
+    - pyspnego>=0.8.0
+    - pyvmomi>=6.7.1
+    - requests>=2.4.2
+    - sansldap
+    - six
+    - suds
+  system:
+    - gcc
+    - make
+    - pkg-config
+    - python3-devel
+    - python3-pip
+    - shadow-utils
+    - sudo
+    - systemd-devel
+
+options:
+  package_manager_path: /usr/bin/microdnf

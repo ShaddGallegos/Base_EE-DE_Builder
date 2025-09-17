@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Builder WebUI
+Comment=Launch Builder Web UI in Chrome
+Exec=/home/sgallego/Downloads/Base_EE-DE_Builder/Run_Builder_WebUI.sh
+Icon=applications-internet
+Terminal=false
+Categories=Development;Network;
+StartupNotify=true

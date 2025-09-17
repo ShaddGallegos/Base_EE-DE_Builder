@@ -1,0 +1,11 @@
+gcc
+krb5-devel
+libffi-devel
+libxml2-devel
+make
+openssl-devel
+pkgconfig
+python3-devel
+python3.11-devel
+rsync
+systemd-devel

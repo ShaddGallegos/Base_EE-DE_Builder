@@ -1,0 +1,8 @@
+gcc
+make
+pkgconfig
+python3.11-devel
+rsync
+systemd-devel
+krb5-devel
+python3.9-devel

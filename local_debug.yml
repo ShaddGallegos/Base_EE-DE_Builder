@@ -1,0 +1,103 @@
+---
+- name: Local Debug for Build Environment
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  pre_tasks:
+    - name: Ensure python3.12 and python3.12-pip are installed (dnf)
+      become: true
+      dnf:
+        name:
+          - python3.12
+          - python3.12-pip
+        state: present
+      ignore_errors: true
+
+    - name: Ensure 'alternatives' is installed (dnf)
+      become: true
+      dnf:
+        name: alternatives
+        state: present
+      ignore_errors: true
+
+    - name: Set python3.12 as the default python3 using alternatives
+      become: true
+      ansible.builtin.command: >
+        alternatives --set python3 /usr/bin/python3.12
+      args:
+        warn: false
+      ignore_errors: true
+
+    - name: Ensure python3.12 is enabled for current session
+      ansible.builtin.shell: |
+        export PATH="/usr/bin:$PATH"
+        hash -r
+        python3 --version
+      register: python3_version_check
+      changed_when: false
+      ignore_errors: true
+
+    - name: Check python3 version
+      ansible.builtin.command: python3 --version
+      register: python3_version_output
+      changed_when: false
+      ignore_errors: true
+
+    - name: Display python3 version
+      ansible.builtin.debug:
+        msg: "Current python3 version: {{ python3_version_output.stdout }}"
+
+    - name: Check pip3 version
+      ansible.builtin.command: pip3 --version
+      register: pip3_version_output
+      changed_when: false
+      ignore_errors: true
+
+    - name: Display pip3 version
+      ansible.builtin.debug:
+        msg: "Current pip3 version: {{ pip3_version_output.stdout }}"
+
+    - name: Check if ansible-playbook is in PATH
+      command: which ansible-playbook
+      register: ansible_playbook_path
+      changed_when: false
+      ignore_errors: true
+
+    - name: Display ansible-playbook path
+      ansible.builtin.debug:
+        msg: "ansible-playbook path: {{ ansible_playbook_path.stdout }}"
+
+    - name: Check if ansible-builder is in PATH
+      command: which ansible-builder
+      register: ansible_builder_path
+      changed_when: false
+      ignore_errors: true
+
+    - name: Display ansible-builder path
+      ansible.builtin.debug:
+        msg: "ansible-builder path: {{ ansible_builder_path.stdout }}"
+
+    - name: Check SELinux status
+      command: getenforce
+      register: selinux_status
+      changed_when: false
+      ignore_errors: true
+
+    - name: Display SELinux status
+      ansible.builtin.debug:
+        msg: "SELinux status: {{ selinux_status.stdout }}"
+
+    - name: Check if user is in podman group (if using podman)
+      command: id -nG
+      register: user_groups
+      changed_when: false
+      ignore_errors: true
+
+    - name: Display podman group membership
+      ansible.builtin.debug:
+        msg: "User groups: {{ user_groups.stdout }}"
+
+  tasks:
+    - name: End of local debug
+      ansible.builtin.debug:
+        msg: "Local debug completed. Review the above output for environment details."

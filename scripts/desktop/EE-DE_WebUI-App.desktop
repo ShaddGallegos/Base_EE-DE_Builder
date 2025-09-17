@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Builder WebUI App
+Comment=GUI launcher for Builder Web UI
+Exec=/home/sgallego/Downloads/Base_EE-DE_Builder/launch_gui.sh
+Icon=applications-development
+Terminal=false
+Categories=Development;Network;
+StartupNotify=true
