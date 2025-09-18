@@ -25,12 +25,29 @@
       failed_when: false
       changed_when: false
       
+    - name: Check if subscription-manager is installed
+      ansible.builtin.stat:
+        path: /usr/sbin/subscription-manager
+      register: subscription_manager_stat
+
+    - name: Check Red Hat registration status
+      ansible.builtin.command: timeout 10 subscription-manager identity
+      args:
+        chdir: /
+      register: rhsm_identity
+      failed_when: false
+      changed_when: false
+      when: subscription_manager_stat.stat.exists
+
     - name: Check subscription-manager functionality
-      ansible.builtin.command: subscription-manager version
+      ansible.builtin.command: timeout 10 subscription-manager version
       register: subscription_manager_check
       failed_when: false
       changed_when: false
-      when: is_rhel.rc == 0
+      when:
+        - is_rhel.rc == 0
+        - subscription_manager_stat.stat.exists
+        - rhsm_identity.rc != 0
 
     - name: Install/repair subscription-manager if needed
       ansible.builtin.dnf:

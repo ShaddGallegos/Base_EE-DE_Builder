@@ -1,3 +1,6 @@
+#!/bin/bash
+
+cat > /home/sgallego/Downloads/GIT/Base_EE-DE_Builder/README.md << 'EOF'
 # Base_EE-DE_Builder
 
 A robust Ansible-based automation project for building, managing, and customizing Red Hat Execution Environments (EEs) and development environments. This project is designed to streamline the process of preparing, configuring, and building containerized Ansible execution environments for RHEL-based systems.
@@ -18,11 +21,26 @@ A robust Ansible-based automation project for building, managing, and customizin
 - [Troubleshooting](#troubleshooting)
 - [License](#license)
 - [Authors](#authors)
+- [EE-DE Builder - Ansible Environment Builder Web Application](#ee-de-builder---ansible-environment-builder-web-application)
+  - [Features (Web UI)](#features-web-ui)
+  - [Architecture](#architecture)
+  - [Technology Stack](#technology-stack)
+  - [Prerequisites (Web UI)](#prerequisites-web-ui)
+  - [Available Make Commands](#available-make-commands)
+  - [Installation Scripts](#installation-scripts)
+  - [API Documentation](#api-documentation)
+  - [Environment Definitions](#environment-definitions)
+  - [Container Building](#container-building)
+  - [Security (Web UI)](#security-web-ui)
+  - [Development](#development)
+  - [Troubleshooting (Web UI)](#troubleshooting-web-ui)
+  - [Contributing](#contributing)
+  - [License (Web UI)](#license-web-ui)
+  - [Support](#support)
 
 ## Prerequisites
 
 ### System Requirements
-
 - **Operating System**: RHEL 8+, Fedora 35+, or compatible Linux distribution
 - **Python**: 3.9+ (3.11+ recommended)
 - **Container Runtime**: Podman 4.0+ (preferred) or Docker
@@ -31,13 +49,11 @@ A robust Ansible-based automation project for building, managing, and customizin
 - **Disk Space**: At least 10GB free space for builds
 
 ### Required Credentials
-
 - Valid Red Hat Customer Portal account
 - Access to registry.redhat.io
 - Ansible Automation Platform subscription (for certain base images)
 
 ### Permissions
-
 - Sudo privileges for package installation
 - User namespace configuration (`/etc/subuid` and `/etc/subgid`)
 - Firewall configuration access (if using Web UI)
@@ -45,7 +61,6 @@ A robust Ansible-based automation project for building, managing, and customizin
 ## Features
 
 ### Core Features
-
 - **Automated Environment Setup**: Complete system preparation and dependency installation
 - **Multi-Distribution Support**: Works on RHEL, Fedora, and compatible systems
 - **Intelligent Authentication**: Automatic registry login with fallback mechanisms
@@ -54,7 +69,6 @@ A robust Ansible-based automation project for building, managing, and customizin
 - **Comprehensive Logging**: Detailed build logs and error reporting
 
 ### Advanced Features
-
 - **Interactive Environment Selection**: Choose from multiple pre-configured environments
 - **Custom Environment Creation**: Build vendor-specific or custom environments
 - **Configuration Management**: Automated handling of build contexts and dependencies
@@ -63,7 +77,7 @@ A robust Ansible-based automation project for building, managing, and customizin
 
 ## Directory Structure
 
-```text
+```
 Base_EE-DE_Builder/
 ├── README.md                           # This file
 ├── ansible.cfg                         # Ansible configuration
@@ -203,7 +217,6 @@ BUILD_PARALLEL=true                   # Enable parallel builds
 ### System Configuration
 
 The playbook automatically configures:
-
 - Container runtime (Podman/Docker)
 - User namespaces for rootless containers
 - Registry authentication
@@ -229,20 +242,17 @@ cleanup_builds: true
 ## Security
 
 ### Credential Management
-
 - Credentials stored in `~/.ansible/conf/env.conf` with restricted permissions (600)
 - No credentials logged or displayed in output
 - Automatic credential validation and secure prompting
 
 ### Container Security
-
 - Rootless container builds by default
 - User namespace isolation
 - No privileged container operations
 - Registry authentication with secure token handling
 
 ### Network Security
-
 - Web UI uses localhost binding by default
 - Configurable firewall rules
 - HTTPS support for production deployments
@@ -256,7 +266,6 @@ cleanup_builds: true
 **Problem**: `podman login` fails with permission errors
 
 **Solution**:
-
 ```bash
 # Check rootless configuration
 podman info --format '{{ .host.security.rootless }}'
@@ -280,7 +289,6 @@ echo "$(id -gn):100000:65536" | sudo tee -a /etc/subgid
 **Problem**: Container builds fail with space or permission errors
 
 **Solution**:
-
 ```bash
 # Check disk space
 df -h
@@ -297,7 +305,6 @@ tail -f /tmp/ee-build-*/build.log
 **Problem**: Cannot access web interface
 
 **Solution**:
-
 ```bash
 # Check services
 systemctl --user status podman
@@ -322,7 +329,6 @@ DEBUG=true make dev
 ### Log Files
 
 Check these locations for detailed logs:
-
 - `/var/log/ansible-builder.log` - Build logs
 - `/tmp/ee-build-<env>/build.log` - Environment-specific logs
 - `~/.ansible/conf/env.conf` - Credential configuration
@@ -337,7 +343,7 @@ This project is licensed under the MIT License. See `LICENSE` file for details.
 - **Primary Maintainer**: shaddgallegos
 - **Contributors**: See `CONTRIBUTORS.md` for full list
 
-## EE-DE Builder - Ansible Environment Builder Web Application
+# EE-DE Builder - Ansible Environment Builder Web Application
 
 A full-stack web application for building and managing Ansible Execution Environments (EE) and Decision Environments (DE) with an intuitive user interface.
 
@@ -427,9 +433,9 @@ make help            # Show available commands
 
 ## Installation Scripts
 
-### Automated Setup Script (Experimental)
+### Automated Setup Script
 
-The `EE-DE_Builder_WebUI_Install_and_Setup.sh` script provides a complete automated installation of a WebUI:
+The `EE-DE_Builder_WebUI_Install_and_Setup.sh` script provides a complete automated installation:
 
 ```bash
 ./EE-DE_Builder_WebUI_Install_and_Setup.sh
@@ -512,14 +518,18 @@ Set your preference in the configuration or environment variables.
 3. **Models**: Define data models in `backend/app/models/`
 4. **Services**: Business logic in `backend/app/services/`
 
-#### Port Already in Use
+## Troubleshooting (Web UI)
+
+### Common Issues
+
+**Port Already in Use**
 
 ```bash
 # Kill processes on ports 3000 and 8000
 make clean
 ```
 
-#### Virtual Environment Issues
+**Virtual Environment Issues**
 
 ```bash
 # Remove and recreate virtual environment
@@ -527,7 +537,19 @@ rm -rf venv
 make setup
 ```
 
-#### Desktop Launcher Issues
+**Container Runtime Issues**
+
+```bash
+# Check Podman/Docker installation
+podman --version
+# or
+docker --version
+
+# Ensure service is running
+systemctl --user start podman
+```
+
+**Desktop Launcher Issues**
 
 ```bash
 # Reinstall launchers manually
@@ -586,3 +608,22 @@ sudo cp Launchers/*.desktop /usr/share/applications/
 sudo chmod 644 /usr/share/applications/EE-DE_*.desktop
 sudo update-desktop-database /usr/share/applications/
 ```
+
+## Contributing
+
+Contributions welcome! Please submit pull requests with:
+
+- Clear descriptions of changes
+- Test results from staging environments
+- Updates to documentation as needed
+
+## License (Web UI)
+
+This section covers licensing for the Web UI components of this project. The project is licensed under the MIT License — see the top-level LICENSE file for full terms and copyright information.
+
+## Support
+
+For support, please contact the maintainers or open an issue on the GitHub repository.
+EOF
+
+echo "README.md has been successfully created at /home/sgallego/Downloads/GIT/Base_EE-DE_Builder/README.md"
