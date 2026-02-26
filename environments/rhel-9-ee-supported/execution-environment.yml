@@ -17,7 +17,7 @@ dependencies:
   system: bindep.txt
   galaxy: requirements.yml
   ansible_core:
-    package_pip: ansible
+    package_pip: ansible-core
   ansible_runner:
     package_pip: ansible-runner
 
@@ -25,19 +25,8 @@ options:
   package_manager_path: /usr/bin/microdnf
 
 additional_build_steps:
-  prepend_builder: |
-    RUN microdnf install -y python3.11 python3.11-pip python3.11-devel python3.11-pyyaml \
-        && ln -sf /usr/bin/python3.11 /usr/bin/python3 \
-        && ln -sf /usr/bin/pip3.11 /usr/bin/pip3 \
-        && python3.11 -m pip install --no-cache-dir --upgrade --ignore-installed bindep \
-        && python3.11 -m ensurepip \
-        && python3.11 -m pip install --upgrade pip setuptools wheel jmespath six
-
   prepend_final: |
-    RUN ln -sf /usr/bin/python3.11 /usr/bin/python3 \
-        && ln -sf /usr/bin/pip3.11 /usr/bin/pip3 \
-        && microdnf upgrade -y \
-        && python3.11 -m pip install --no-cache-dir --upgrade --ignore-installed pip setuptools wheel jmespath six
+    RUN microdnf upgrade -y && microdnf clean all
 
   append_final: |
     USER root

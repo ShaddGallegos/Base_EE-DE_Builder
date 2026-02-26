@@ -1,0 +1,5 @@
+- name: Import environment configuration
+  import_playbook: env_conf.yml
+
+- name: Import build environments
+  import_playbook: build_environments.yml

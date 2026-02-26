@@ -1,30 +1,47 @@
-- name: Ensure ~/.ansible/conf.env.conf contains required credentials
+- name: Ensure ~/.ansible/conf/env.yml contains required credentials
   hosts: localhost
   gather_facts: false
   vars:
-    env_conf_dir: "{{ lookup('env', 'HOME') }}/.ansible/conf"
-    env_conf_path: "{{ env_conf_dir }}/env.conf"
-    ansible_python_interpreter: /usr/bin/python3
-    repos_to_enable:
-      - ansible-automation-platform-2.5-for-rhel-9-x86_64-rpms
-      - rhel-9-for-x86_64-baseos-rpms
-      - rhel-9-for-x86_64-appstream-rpms
-      - codeready-builder-for-rhel-9-x86_64-rpms
-      - rhel-9-for-x86_64-supplementary-rpms
+    env_conf_home: >-
+      {{
+        ('/home/' ~ lookup('env', 'SUDO_USER'))
+        if (lookup('env', 'SUDO_USER') | default('', true) | length > 0)
+        else lookup('env', 'HOME')
+      }}
+    env_conf_dir: "{{ env_conf_home }}/.ansible/conf"
+    env_conf_path: "{{ env_conf_dir }}/env.yml"
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    aap_repo_version: "2.5"
+    enforce_rootless_build: false
+    run_as_user: >-
+      {{
+        (lookup('env', 'SUDO_USER'))
+        if (lookup('env', 'SUDO_USER') | default('', true) | length > 0)
+        else lookup('env', 'USER')
+      }}
     environments_dir: "{{ playbook_dir }}/environments"
+    redhat_username: "{{ lookup('env', 'REDHAT_CDN_USERNAME') | default('', true) }}"
+    redhat_password: "{{ lookup('env', 'REDHAT_CDN_PASSWORD') | default('', true) }}"
 
   pre_tasks:
-    - name: Ensure community.general collection is installed
-      ansible.builtin.shell: ansible-galaxy collection install community.general --force
-      args:
-        executable: /bin/bash
+    - name: Check if community.general collection is installed
+      ansible.builtin.command: ansible-galaxy collection list community.general
+      register: community_general_check
+      changed_when: false
+      failed_when: false
+
+    - name: Install community.general collection if missing
+      ansible.builtin.command: ansible-galaxy collection install community.general
+      register: community_general_install
+      changed_when: "'Nothing to do' not in (community_general_install.stdout | default(''))"
+      when: community_general_check.rc != 0
 
     - name: Check if system is RHEL
       ansible.builtin.command: grep -q "Red Hat Enterprise Linux" /etc/os-release
       register: is_rhel
       failed_when: false
       changed_when: false
-      
+
     - name: Check if subscription-manager is installed
       ansible.builtin.stat:
         path: /usr/sbin/subscription-manager
@@ -52,16 +69,27 @@
     - name: Install/repair subscription-manager if needed
       ansible.builtin.dnf:
         name: subscription-manager
-        state: latest
+        state: present
       become: true
-      when: is_rhel.rc == 0 and subscription_manager_check.rc != 0
+      when:
+        - is_rhel.rc == 0
+        - subscription_manager_check.rc != 0
 
     - name: Register the system with Red Hat Subscription Manager
-      ansible.builtin.shell: subscription-manager register --username {{ redhat_username }} --password '{{ redhat_password }}'
+      ansible.builtin.shell: >
+        subscription-manager register --username {{ redhat_username }}
+        --password '{{ redhat_password }}'
       become: true
       register: subscription_result
       failed_when: false
-      when: is_rhel.rc == 0 and subscription_manager_check.rc == 0
+      changed_when: "'The system has been registered' in (subscription_result.stdout | default(''))"
+      no_log: true
+      when:
+        - is_rhel.rc == 0
+        - subscription_manager_check.rc == 0
+        - rhsm_identity.rc != 0
+        - redhat_username | length > 0
+        - redhat_password | length > 0
 
     - name: Show subscription status
       ansible.builtin.debug:
@@ -74,46 +102,119 @@
           Registration skipped. Using podman auth for registry access.
           {% endif %}
 
-    - name: Ensure facts are gathered
+    - name: Gather minimal facts
       ansible.builtin.setup:
         gather_subset:
           - '!all'
-          - 'distribution'
-  
+          - distribution
+          - hardware
+
     - name: Set OS facts
       ansible.builtin.set_fact:
-        is_rhel_system: "{{ ansible_distribution == 'RedHat' }}"
+        is_rhel_system: "{{ ansible_facts['distribution'] == 'RedHat' }}"
         using_subscription: false
 
-    - name: Notify about repository handling
+    - name: Set RHEL repository naming facts
+      ansible.builtin.set_fact:
+        rhel_major_version: "{{ ansible_facts['distribution_major_version'] | default((ansible_facts['distribution_version'] | string).split('.')[0]) }}"
+        rhel_arch: "{{ ansible_facts['architecture'] | default('x86_64') }}"
+      when: is_rhel_system
+
+    - name: Build required Red Hat repository IDs (RHEL only)
+      ansible.builtin.set_fact:
+        repos_to_enable:
+          - "ansible-automation-platform-{{ aap_repo_version }}-for-rhel-{{ rhel_major_version }}-{{ rhel_arch }}-rpms"
+          - "rhel-{{ rhel_major_version }}-for-{{ rhel_arch }}-baseos-rpms"
+          - "rhel-{{ rhel_major_version }}-for-{{ rhel_arch }}-appstream-rpms"
+          - "codeready-builder-for-rhel-{{ rhel_major_version }}-{{ rhel_arch }}-rpms"
+          - "rhel-{{ rhel_major_version }}-for-{{ rhel_arch }}-supplementary-rpms"
+      when: is_rhel_system
+
+    - name: Notify repository handling
       ansible.builtin.debug:
         msg: |
-          Running on {{ ansible_distribution }} {{ ansible_distribution_version }}
+          Running on {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}
           Will {% if not is_rhel_system %}NOT{% endif %} use subscription-manager for repositories
           {% if not is_rhel_system %}Using alternative repository approach{% endif %}
 
-    - name: Enable required Red Hat repositories (RHEL only)
-      ansible.builtin.rhsm_repository:
-        name: "{{ item }}"
-        state: enabled
-      loop:
-        - ansible-automation-platform-2.5-for-rhel-9-x86_64-rpms
-        - rhel-9-for-x86_64-baseos-rpms
-        - rhel-9-for-x86_64-appstream-rpms
-        - codeready-builder-for-rhel-9-x86_64-rpms
-        - rhel-9-for-x86_64-supplementary-rpms
+    - name: Get currently enabled Red Hat repositories (RHEL only)
+      ansible.builtin.command:
+        argv:
+          - subscription-manager
+          - repos
+          - --list-enabled
+      become: true
       when: is_rhel_system
+      register: enabled_repos
+      changed_when: false
+      failed_when: false
+
+    - name: Get all available Red Hat repositories (RHEL only)
+      ansible.builtin.command:
+        argv:
+          - subscription-manager
+          - repos
+          - --list
+      become: true
+      when: is_rhel_system
+      register: available_repos
+      changed_when: false
+      failed_when: false
+
+    - name: Build enabled repository id list (RHEL only)
+      ansible.builtin.set_fact:
+        enabled_repo_ids: >-
+          {{
+            (enabled_repos.stdout | default(''))
+            | regex_findall('(?m)^Repo ID:\\s*(\\S+)\\s*$')
+            | list
+          }}
+        available_repo_ids: >-
+          {{
+            (available_repos.stdout | default(''))
+            | regex_findall('(?m)^Repo ID:\\s*(\\S+)\\s*$')
+            | list
+          }}
+        repos_to_enable_filtered: >-
+          {{
+            (repos_to_enable | default([]))
+            | intersect(available_repo_ids | default([]))
+            | list
+          }}
+      when: is_rhel_system
+
+    - name: Show unavailable repositories skipped on this host
+      ansible.builtin.debug:
+        msg: >-
+          Skipping unavailable repositories: {{ (repos_to_enable | default([])) | difference(repos_to_enable_filtered | default([])) | join(', ') }}
+      when:
+        - is_rhel_system
+        - ((repos_to_enable | default([])) | difference(repos_to_enable_filtered | default([])) | length) > 0
+
+    - name: Enable required Red Hat repositories (RHEL only)
+      ansible.builtin.command:
+        argv:
+          - subscription-manager
+          - repos
+          - "--enable={{ item }}"
+      become: true
+      loop: "{{ repos_to_enable_filtered | default([]) }}"
+      when:
+        - is_rhel_system
+        - item not in enabled_repo_ids
       register: rhsm_result
+      changed_when: rhsm_result.rc == 0
       failed_when: false
 
     - name: Set up alternative repositories (non-RHEL)
+      when: not is_rhel_system
       block:
         - name: Enable EPEL repository
           ansible.builtin.dnf:
             name: epel-release
             state: present
           become: true
-          
+
         - name: Set up Ansible repository
           ansible.builtin.dnf:
             name: https://releases.ansible.com/ansible-tower/rpm/el9/ansible-tower-repo-latest-9.el9.noarch.rpm
@@ -121,7 +222,7 @@
             disable_gpg_check: true
           become: true
           failed_when: false
-          
+
         - name: Install common dependencies
           ansible.builtin.dnf:
             name:
@@ -135,7 +236,6 @@
               - gcc
             state: present
           become: true
-      when: not is_rhel_system
 
     - name: Find all RHEL environment directories
       ansible.builtin.find:
@@ -143,21 +243,70 @@
         file_type: directory
         excludes: ".*"
       register: found_rhel_dirs
+
     - name: Ensure user has subuid mapping for rootless Podman
       become: true
       ansible.builtin.lineinfile:
         path: /etc/subuid
-        line: "{{ lookup('env','USER') }}:100000:65536"
-        create: yes
+        line: "{{ run_as_user }}:100000:65536"
+        create: true
         state: present
+        owner: root
+        group: root
+        mode: '0644'
 
     - name: Ensure user has subgid mapping for rootless Podman
       become: true
       ansible.builtin.lineinfile:
         path: /etc/subgid
-        line: "{{ lookup('env','USER') }}:100000:65536"
-        create: yes
+        line: "{{ run_as_user }}:100000:65536"
+        create: true
         state: present
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Get UID for rootless Podman user
+      ansible.builtin.command: "id -u {{ run_as_user }}"
+      register: run_as_uid
+      changed_when: false
+
+    - name: Check user namespace sysctl availability
+      become: true
+      ansible.builtin.stat:
+        path: /proc/sys/user/max_user_namespaces
+      register: userns_max_stat
+
+    - name: Check unprivileged userns clone sysctl availability
+      become: true
+      ansible.builtin.stat:
+        path: /proc/sys/kernel/unprivileged_userns_clone
+      register: userns_clone_stat
+
+    - name: Ensure user.max_user_namespaces is configured
+      become: true
+      ansible.builtin.command: sysctl -w user.max_user_namespaces=524288
+      when: userns_max_stat.stat.exists
+      register: userns_max_set
+      changed_when: "'= 524288' in (userns_max_set.stdout | default(''))"
+      failed_when: false
+
+    - name: Ensure kernel.unprivileged_userns_clone is enabled when available
+      become: true
+      ansible.builtin.command: sysctl -w kernel.unprivileged_userns_clone=1
+      when: userns_clone_stat.stat.exists
+      register: userns_clone_set
+      changed_when: "'= 1' in (userns_clone_set.stdout | default(''))"
+      failed_when: false
+
+    - name: Ensure XDG runtime dir exists for rootless Podman user
+      become: true
+      ansible.builtin.file:
+        path: "/run/user/{{ run_as_uid.stdout }}"
+        state: directory
+        owner: "{{ run_as_user }}"
+        group: "{{ run_as_user }}"
+        mode: '0700'
 
     - name: Ensure /usr/bin/newuidmap is setuid root
       become: true
@@ -171,16 +320,13 @@
         path: /usr/bin/newgidmap
         mode: '4755'
 
-    # Python and Ansible requirements
-    - name: Ensure python3, python3-pip, python3.11, and python3.11-pip are installed
+    - name: Ensure required packages are installed
       become: true
       ansible.builtin.dnf:
         name:
           - ansible-core
           - python3
           - python3-pip
-          - python3.11
-          - python3.11-pip
           - git
           - podman
           - rpm-build
@@ -192,10 +338,10 @@
           - jq
           - libselinux-python3
           - redhat-rpm-config
-        state: present
+        state: latest
         update_cache: true
 
-    - name: Upgrade pip, setuptools, wheel, six, and install jmespath
+    - name: Ensure pip base tooling and jmespath are installed
       ansible.builtin.pip:
         name:
           - pip
@@ -203,96 +349,224 @@
           - wheel
           - six
           - jmespath
-        state: latest
+        state: present
         extra_args: --user
         executable: pip3
-      ignore_errors: true
 
-    - name: Upgrade pip and install required Python packages
+    - name: Ensure ansible-dev-tools is installed
       ansible.builtin.pip:
         name:
           - ansible-dev-tools
+        state: present
+        extra_args: --user
+        executable: pip3
+      failed_when: false
+
+    - name: Ensure ansible-builder and ansible-core are installed/upgraded for user
+      ansible.builtin.pip:
+        name:
+          - ansible-builder
+          - ansible-core
         state: latest
         extra_args: --user
         executable: pip3
-      ignore_errors: true
 
-    # Credentials logic
+    - name: Ensure ansible-builder is available for rootful fallback
+      become: true
+      ansible.builtin.pip:
+        name:
+          - ansible-builder
+        state: present
+        executable: pip3
+        break_system_packages: true
+
+
     - name: Ensure ~/.ansible/conf directory exists
-      file:
-        path: "{{ lookup('env', 'HOME') }}/.ansible/conf"
+      ansible.builtin.file:
+        path: "{{ env_conf_dir }}"
         state: directory
         mode: '0700'
 
-    - name: Ensure env.conf file exists
-      copy:
-        dest: "{{ lookup('env', 'HOME') }}/.ansible/conf/env.conf"
+    - name: Ensure env.yml file exists
+      ansible.builtin.copy:
+        dest: "{{ env_conf_path }}"
         content: ""
-        force: no
+        force: false
         mode: '0600'
 
-    - name: Read env.conf
-      slurp:
-        src: "{{ lookup('env', 'HOME') }}/.ansible/conf/env.conf"
+    - name: Read env.yml
+      ansible.builtin.slurp:
+        src: "{{ env_conf_path }}"
       register: env_conf_slurp
 
-    - name: Parse env.conf lines
-      set_fact:
+    - name: Parse env.yml lines
+      ansible.builtin.set_fact:
         env_conf_lines: "{{ (env_conf_slurp.content | b64decode).splitlines() }}"
 
+    - name: Detect existing credential lines in env.yml
+      ansible.builtin.set_fact:
+        has_rh_credentials_token_line: "{{ (env_conf_lines | select('match', '^\\s*(export\\s+)?RH_CREDENTIALS_TOKEN\\s*=') | list | length) > 0 }}"
+        has_redhat_cdn_username_line: "{{ (env_conf_lines | select('match', '^\\s*(export\\s+)?REDHAT_CDN_USERNAME\\s*=') | list | length) > 0 }}"
+        has_redhat_cdn_password_line: "{{ (env_conf_lines | select('match', '^\\s*(export\\s+)?REDHAT_CDN_PASSWORD\\s*=') | list | length) > 0 }}"
+
     - name: Set facts for existing secrets
-      set_fact:
-        rh_credentials_token: "{{ env_conf_lines | select('match', '^RH_CREDENTIALS_TOKEN=') | map('regex_replace', '^RH_CREDENTIALS_TOKEN=(.*)', '\\1') | list | first | default('') }}"
-        redhat_cdn_username: "{{ env_conf_lines | select('match', '^REDHAT_CDN_USERNAME=') | map('regex_replace', '^REDHAT_CDN_USERNAME=(.*)', '\\1') | list | first | default('') }}"
-        redhat_cdn_password: "{{ env_conf_lines | select('match', '^REDHAT_CDN_PASSWORD=') | map('regex_replace', '^REDHAT_CDN_PASSWORD=(.*)', '\\1') | list | first | default('') }}"
+      ansible.builtin.set_fact:
+        rh_credentials_token: >-
+          {{
+            env_conf_lines
+            | select('match', '^\s*(export\s+)?RH_CREDENTIALS_TOKEN\s*=')
+            | map('regex_replace', '^\s*(export\s+)?RH_CREDENTIALS_TOKEN\s*=\s*', '')
+            | list
+            | first
+            | default('')
+            | trim
+          }}
+        redhat_cdn_username: >-
+          {{
+            env_conf_lines
+            | select('match', '^\s*(export\s+)?REDHAT_CDN_USERNAME\s*=')
+            | map('regex_replace', '^\s*(export\s+)?REDHAT_CDN_USERNAME\s*=\s*', '')
+            | list
+            | first
+            | default('')
+            | trim
+          }}
+        redhat_cdn_password: >-
+          {{
+            env_conf_lines
+            | select('match', '^\s*(export\s+)?REDHAT_CDN_PASSWORD\s*=')
+            | map('regex_replace', '^\s*(export\s+)?REDHAT_CDN_PASSWORD\s*=\s*', '')
+            | list
+            | first
+            | default('')
+            | trim
+          }}
 
     - name: Prompt for Red Hat CDN username if not set
       ansible.builtin.pause:
         prompt: "Enter your Red Hat CDN username:"
       register: cdn_username_prompt
-      when: redhat_cdn_username == ""
+      when:
+        - (not (has_redhat_cdn_username_line | bool)) or redhat_cdn_username | default('') | trim | length == 0
 
     - name: Set fact for Red Hat CDN username from prompt
-      set_fact:
+      ansible.builtin.set_fact:
         redhat_cdn_username: "{{ cdn_username_prompt.user_input }}"
-      when: redhat_cdn_username == ""
+      when:
+        - (not (has_redhat_cdn_username_line | bool)) or redhat_cdn_username | default('') | trim | length == 0
 
     - name: Prompt for Red Hat CDN password if not set
       ansible.builtin.pause:
         prompt: "Enter your Red Hat CDN password:"
-        echo: no
+        echo: false
       register: cdn_password_prompt
-      when: redhat_cdn_password == ""
+      when:
+        - (not (has_redhat_cdn_password_line | bool)) or redhat_cdn_password | default('') | trim | length == 0
 
     - name: Set fact for Red Hat CDN password from prompt
-      set_fact:
+      ansible.builtin.set_fact:
         redhat_cdn_password: "{{ cdn_password_prompt.user_input }}"
-      when: redhat_cdn_password == ""
+      when:
+        - (not (has_redhat_cdn_password_line | bool)) or redhat_cdn_password | default('') | trim | length == 0
 
     - name: Prompt for RH_CREDENTIALS_TOKEN if not set
       ansible.builtin.pause:
         prompt: "Enter your RH_CREDENTIALS_TOKEN (for ansible.cfg):"
-        echo: no
+        echo: false
       register: rh_token_prompt
-      when: rh_credentials_token == ""
+      when:
+        - (not (has_rh_credentials_token_line | bool)) or rh_credentials_token | default('') | trim | length == 0
 
     - name: Set fact for RH_CREDENTIALS_TOKEN from prompt
-      set_fact:
+      ansible.builtin.set_fact:
         rh_credentials_token: "{{ rh_token_prompt.user_input }}"
-      when: rh_credentials_token == ""
+      when:
+        - (not (has_rh_credentials_token_line | bool)) or rh_credentials_token | default('') | trim | length == 0
 
-    - name: Update env.conf with any new values
-      copy:
-        dest: "{{ lookup('env', 'HOME') }}/.ansible/conf/env.conf"
+    - name: Fail if required registry credentials are empty
+      ansible.builtin.fail:
+        msg: >-
+          REDHAT_CDN_USERNAME and REDHAT_CDN_PASSWORD must be non-empty in {{ env_conf_path }}
+          before Podman login can run.
+      when:
+        - ((not (has_redhat_cdn_username_line | bool)) and (redhat_cdn_username | default('') | trim | length == 0))
+          or ((not (has_redhat_cdn_password_line | bool)) and (redhat_cdn_password | default('') | trim | length == 0))
+
+    - name: Validate rootless Podman availability for run user
+      ansible.builtin.command: podman info --format '{{ "{{.Host.Security.Rootless}}" }}'
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ run_as_uid.stdout }}"
+        HOME: "{{ env_conf_home }}"
+      register: rootless_check
+      changed_when: false
+      failed_when: false
+
+    - name: Set Podman mode based on rootless validation
+      ansible.builtin.set_fact:
+        podman_mode: "{{ 'rootless' if (rootless_check.rc == 0 and (rootless_check.stdout | default('') | trim) == 'true') else 'rootful' }}"
+
+    - name: Notify selected Podman mode
+      ansible.builtin.debug:
+        msg: >-
+          Using {{ podman_mode }} Podman mode.
+          {% if podman_mode != 'rootless' %}
+          Rootless user namespaces are not available on this host/session.
+          {% endif %}
+
+    - name: Require rootless Podman mode for user-owned builds
+      ansible.builtin.fail:
+        msg: >-
+          Rootless Podman is required because ansible-builder must run as user {{ run_as_user }}.
+          Current mode is {{ podman_mode }}.
+      when:
+        - enforce_rootless_build | bool
+        - podman_mode != 'rootless'
+
+    - name: Update env.yml with any new values
+      ansible.builtin.copy:
+        dest: "{{ env_conf_path }}"
         content: |
           RH_CREDENTIALS_TOKEN={{ rh_credentials_token }}
           REDHAT_CDN_USERNAME={{ redhat_cdn_username }}
           REDHAT_CDN_PASSWORD={{ redhat_cdn_password }}
         mode: '0600'
+      when:
+        - not (has_rh_credentials_token_line | bool)
+          or not (has_redhat_cdn_username_line | bool)
+          or not (has_redhat_cdn_password_line | bool)
+          or rh_credentials_token | default('') | trim | length == 0
+          or redhat_cdn_username | default('') | trim | length == 0
+          or redhat_cdn_password | default('') | trim | length == 0
 
-    - name: Podman login to registry.redhat.io, fallback to registry.access.redhat.com if needed
+    - name: Podman login with fallback (rootless)
+      when: podman_mode == 'rootless'
       block:
         - name: Podman login to registry.redhat.io
+          ansible.builtin.shell: |
+            podman login registry.redhat.io -u "{{ redhat_cdn_username }}" -p "{{ redhat_cdn_password }}"
+          register: podman_login
+          environment:
+            XDG_RUNTIME_DIR: "/run/user/{{ run_as_uid.stdout }}"
+            HOME: "{{ env_conf_home }}"
+          changed_when: "'Login Succeeded' in podman_login.stdout"
+          failed_when: podman_login.rc != 0
+      rescue:
+        - name: Podman login to registry.access.redhat.com (fallback)
+          ansible.builtin.shell: |
+            podman login registry.access.redhat.com -u "{{ redhat_cdn_username }}" -p "{{ redhat_cdn_password }}"
+          register: podman_login_fallback
+          environment:
+            XDG_RUNTIME_DIR: "/run/user/{{ run_as_uid.stdout }}"
+            HOME: "{{ env_conf_home }}"
+          changed_when: "'Login Succeeded' in podman_login_fallback.stdout"
+          failed_when: podman_login_fallback.rc != 0
+
+    - name: Podman login with fallback (rootful)
+      when:
+        - podman_mode == 'rootful'
+        - not (enforce_rootless_build | bool)
+      block:
+        - name: Podman login to registry.redhat.io (rootful)
           become: true
           ansible.builtin.shell: |
             podman login registry.redhat.io -u "{{ redhat_cdn_username }}" -p "{{ redhat_cdn_password }}"
@@ -300,7 +574,7 @@
           changed_when: "'Login Succeeded' in podman_login.stdout"
           failed_when: podman_login.rc != 0
       rescue:
-        - name: Podman login to registry.access.redhat.com (fallback)
+        - name: Podman login to registry.access.redhat.com (rootful fallback)
           become: true
           ansible.builtin.shell: |
             podman login registry.access.redhat.com -u "{{ redhat_cdn_username }}" -p "{{ redhat_cdn_password }}"
@@ -313,27 +587,50 @@
   gather_facts: false
   vars:
     environments_dir: "{{ playbook_dir }}/environments"
-    env_conf_path: "{{ lookup('env', 'HOME') }}/.ansible/conf/env.conf"
-    ab_log: "/var/log/ansible-builder.log"
+    env_conf_path: "{{ lookup('env', 'HOME') }}/.ansible/conf/env.yml"
+    build_workspace_dir: "{{ playbook_dir }}/.artifacts/ee-build"
+    ab_log: "{{ build_workspace_dir }}/ansible-builder.log"
     build_tag: "{{ lookup('pipe', 'date +%Y%m%d-%H%M%S') }}"
+    run_as_user: >-
+      {{
+        (lookup('env', 'SUDO_USER'))
+        if (lookup('env', 'SUDO_USER') | default('', true) | length > 0)
+        else lookup('env', 'USER')
+      }}
+    run_as_home: >-
+      {{
+        ('/home/' ~ lookup('env', 'SUDO_USER'))
+        if (lookup('env', 'SUDO_USER') | default('', true) | length > 0)
+        else lookup('env', 'HOME')
+      }}
+    enforce_rootless_build: false
 
   tasks:
+    - name: Get UID for rootless Podman user (build play)
+      ansible.builtin.command: "id -u {{ run_as_user }}"
+      register: run_as_uid
+      changed_when: false
+
+    - name: Ensure Podman mode fact exists in build play
+      ansible.builtin.set_fact:
+        podman_mode: "{{ podman_mode | default('rootful') }}"
+
     - name: Filter only directories with 'rhel' in the name
-      set_fact:
+      ansible.builtin.set_fact:
         rhel_dirs: "{{ found_rhel_dirs.files | selectattr('path', 'search', 'rhel') | list | sort(attribute='path') }}"
 
-    - name: Build menu options as a list of lines (for vertical display)
+    - name: Build menu options
       vars:
         menu_lines: |
           {% set lines = ['rhel_environments:'] %}
           {% for dir in rhel_dirs | map(attribute='path') | map('basename') | list %}
-          {% set _ = lines.append(loop.index|string + '. ' + dir) %}
+          {% set _ = lines.append(loop.index | string + '. ' + dir) %}
           {% endfor %}
-          {% set _ = lines.append((rhel_dirs|length + 1)|string + '. ALL') %}
+          {% set _ = lines.append((rhel_dirs | length + 1) | string + '. ALL') %}
           {% set _ = lines.append("This menu accepts a single selection or a ',' separated list.") %}
           {% set _ = lines.append(':') %}
           {{ lines }}
-      set_fact:
+      ansible.builtin.set_fact:
         menu_options_lines: "{{ menu_lines }}"
 
     - name: Display menu options
@@ -342,20 +639,33 @@
 
     - name: Prompt user for environment selection
       ansible.builtin.pause:
-        prompt: |
-          Enter comma-separated numbers (e.g. 1,3,4) or '{{ rhel_dirs|length + 1 }}' for all:
+        prompt: "Enter comma-separated numbers (e.g. 1,3,4) or '{{ rhel_dirs | length + 1 }}' for all:"
       register: user_selection
 
-    - name: Set environment_list to all if user selects 'all' or N+1
-      set_fact:
+    - name: Set environment_list to all
+      ansible.builtin.set_fact:
         environment_list: "{{ rhel_dirs | map(attribute='path') | map('basename') | list }}"
-      when: user_selection.user_input | trim | lower == 'all' or user_selection.user_input | trim == (rhel_dirs|length + 1)|string
+      when: user_selection.user_input | trim | lower == 'all' or user_selection.user_input | trim == (rhel_dirs | length + 1) | string
 
-    - name: Set environment_list to selected items if user provides a list
-      set_fact:
+    - name: Set environment_list to selected items
+      ansible.builtin.set_fact:
         environment_list: >-
-          {{ rhel_dirs | map(attribute='path') | map('basename') | list | zip(range(1, rhel_dirs|length + 1)) | selectattr('1', 'in', user_selection.user_input.replace(' ', '').split(',') | map('int') | list) | map('first') | list }}
-      when: user_selection.user_input | trim | lower != 'all' and user_selection.user_input | trim != (rhel_dirs|length + 1)|string
+          {{ rhel_dirs | map(attribute='path') | map('basename') | list
+             | zip(range(1, rhel_dirs|length + 1))
+             | selectattr('1', 'in', user_selection.user_input.replace(' ', '').split(',') | map('int') | list)
+             | map('first') | list }}
+      when: user_selection.user_input | trim | lower != 'all' and user_selection.user_input | trim != (rhel_dirs | length + 1) | string
+
+    - name: Ensure environment_list is initialized
+      ansible.builtin.set_fact:
+        environment_list: "{{ environment_list | default([]) }}"
+
+    - name: Fail when no valid environments are selected
+      ansible.builtin.fail:
+        msg: >-
+          No valid execution environments were selected. Input was '{{ user_selection.user_input | default('') }}'.
+          Choose 'all', '{{ rhel_dirs | length + 1 }}', or one/more numbers between 1 and {{ rhel_dirs | length }}.
+      when: environment_list | length == 0
 
     - name: Debug selected environment list
       ansible.builtin.debug:
@@ -377,64 +687,102 @@
       loop_control:
         label: "{{ item.item }}"
 
-    - name: Clean up old /tmp/ee-build-{{ item }} as root
+    - name: Clean up old /tmp build context
       become: true
       ansible.builtin.file:
-        path: "/tmp/ee-build-{{ item }}"
+        path: "{{ build_workspace_dir }}/{{ item }}"
         state: absent
       loop: "{{ environment_list }}"
-      ignore_errors: true
+      register: cleanup_tmp_build_context
+      failed_when:
+        - cleanup_tmp_build_context is failed
+        - "'No such file or directory' not in (cleanup_tmp_build_context.msg | default(''))"
+
+    - name: Ensure build workspace directory exists
+      ansible.builtin.file:
+        path: "{{ build_workspace_dir }}"
+        state: directory
+        mode: '0755'
 
     - name: Prepare /tmp build context for each environment
       ansible.builtin.shell: |
-        mkdir -p /tmp/ee-build-{{ item }}
-        cp -a {{ environments_dir }}/{{ item }}/* /tmp/ee-build-{{ item }}/
+        mkdir -p {{ build_workspace_dir }}/{{ item }}
+        cp -a {{ environments_dir }}/{{ item }}/* {{ build_workspace_dir }}/{{ item }}/
       loop: "{{ environment_list }}"
       changed_when: true
 
     - name: Template ansible.cfg into build context
       ansible.builtin.template:
         src: templates/ansible.cfg.j2
-        dest: "/tmp/ee-build-{{ item }}/ansible.cfg"
+        dest: "{{ build_workspace_dir }}/{{ item }}/ansible.cfg"
         mode: '0644'
       loop: "{{ environment_list }}"
-      loop_control:
-        label: "{{ item }}"
 
     - name: Ensure ansible-builder log file exists and is writable
-      become: true
       ansible.builtin.file:
         path: "{{ ab_log }}"
         state: touch
-        mode: '0666'
+        mode: '0644'
 
-    - name: Build execution environment with ansible-builder
-      become: true
+    - name: Build execution environment with ansible-builder (rootless)
       ansible.builtin.shell: |
+        set -o pipefail
         echo "=== Building {{ item }} at $(date) ===" | tee -a {{ ab_log }}
-        ansible-builder build \
+        {{ ansible_playbook_python }} -m ansible_builder build \
           --container-runtime podman \
           --file execution-environment.yml \
           --tag {{ item }}:{{ build_tag }} \
           --prune \
           --verbosity 3 2>&1 | tee -a {{ ab_log }}
+        build_rc=${PIPESTATUS[0]}
         echo "=== Done {{ item }} at $(date) ===" | tee -a {{ ab_log }}
-        podman image ls -a | grep '<none>' | awk '{print $3}' | xargs podman rmi -f || true
+        podman image ls -a | grep '<none>' | awk '{print $3}' | xargs -r podman rmi -f || true
+        exit $build_rc
       args:
-        chdir: "/tmp/ee-build-{{ item }}"
+        chdir: "{{ build_workspace_dir }}/{{ item }}"
         executable: /bin/bash
       environment:
-        PATH: "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:{{ lookup('env', 'PATH') }}"
+        PATH: "{{ lookup('env', 'PATH') }}"
+        XDG_RUNTIME_DIR: "/run/user/{{ run_as_uid.stdout }}"
+        HOME: "{{ run_as_home }}"
       loop: "{{ environment_list }}"
-      loop_control:
-        label: "{{ item }}"
       register: build_results
+      changed_when: true
       failed_when: build_results.rc != 0
+      when: podman_mode == 'rootless'
+
+    - name: Build execution environment with ansible-builder (rootful fallback)
+      become: true
+      ansible.builtin.shell: |
+        set -o pipefail
+        echo "=== Building {{ item }} at $(date) ===" | tee -a {{ ab_log }}
+        {{ ansible_playbook_python }} -m ansible_builder build \
+          --container-runtime podman \
+          --file execution-environment.yml \
+          --tag {{ item }}:{{ build_tag }} \
+          --prune \
+          --verbosity 3 2>&1 | tee -a {{ ab_log }}
+        build_rc=${PIPESTATUS[0]}
+        echo "=== Done {{ item }} at $(date) ===" | tee -a {{ ab_log }}
+        podman image ls -a | grep '<none>' | awk '{print $3}' | xargs -r podman rmi -f || true
+        exit $build_rc
+      args:
+        chdir: "{{ build_workspace_dir }}/{{ item }}"
+        executable: /bin/bash
+      environment:
+        PATH: "{{ lookup('env', 'PATH') }}"
+      loop: "{{ environment_list }}"
+      register: build_results
+      changed_when: true
+      failed_when: build_results.rc != 0
+      when:
+        - podman_mode == 'rootful'
+        - not (enforce_rootless_build | bool)
 
     - name: Show build summary report
       ansible.builtin.debug:
         msg: |
           Build Summary:
-          {% for idx in range(environment_list|length) %}
+          {% for idx in range(environment_list | length) %}
             - {{ environment_list[idx] }}: {% if build_results.results[idx].rc == 0 %}SUCCESS{% else %}FAILED{% endif %} (see {{ ab_log }})
           {% endfor %}
