@@ -3,7 +3,7 @@ version: 3
 
 images:
   base_image:
-    name: 'registry.redhat.io/ansible-automation-platform-25/ee-supported-rhel8:latest'
+    name: 'registry.redhat.io/ansible-automation-platform-25/de-minimal-rhel8:latest'
     options:
       pull_policy: missing
       tls_verify: false
@@ -17,9 +17,6 @@ dependencies:
     package_pip: ansible-core
   ansible_runner:
     package_pip: ansible-runner
-  python_interpreter:
-    package_system: python3.11
-    python_path: /usr/bin/python3.11
   python: requirements.txt
   system: bindep.txt
   galaxy: requirements.yml

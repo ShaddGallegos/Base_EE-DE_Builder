@@ -166,13 +166,13 @@
         enabled_repo_ids: >-
           {{
             (enabled_repos.stdout | default(''))
-            | regex_findall('(?m)^Repo ID:\\s*(\\S+)\\s*$')
+            | regex_findall('(?m)^\\s*Repo ID:\\s*(\\S+)\\s*$')
             | list
           }}
         available_repo_ids: >-
           {{
             (available_repos.stdout | default(''))
-            | regex_findall('(?m)^Repo ID:\\s*(\\S+)\\s*$')
+            | regex_findall('(?m)^\\s*Repo ID:\\s*(\\S+)\\s*$')
             | list
           }}
         repos_to_enable_filtered: >-
