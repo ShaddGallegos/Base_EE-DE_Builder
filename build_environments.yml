@@ -606,7 +606,6 @@
         if (lookup('env', 'SUDO_USER') | default('', true) | length > 0)
         else lookup('env', 'HOME')
       }}
-    ee_selection: "{{ ee_selection | default('', true) }}"
     enforce_rootless_build: false
 
   tasks:
@@ -643,8 +642,8 @@
 
     - name: Set environment selection from extra vars when provided
       ansible.builtin.set_fact:
-        user_selection_input: "{{ ee_selection | string | trim }}"
-      when: ee_selection | string | trim | length > 0
+        user_selection_input: "{{ ee_selection | default('', true) | string | trim }}"
+      when: ee_selection | default('', true) | string | trim | length > 0
 
     - name: Prompt user for environment selection
       ansible.builtin.pause:
