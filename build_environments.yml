@@ -310,6 +310,11 @@
       changed_when: "'= 1' in (userns_clone_set.stdout | default(''))"
       failed_when: false
 
+    - name: Skip XDG runtime dir management on Fedora
+      ansible.builtin.debug:
+        msg: "Skipping /run/user/{{ run_as_uid.stdout }} management on Fedora; using system-managed runtime directory."
+      when: is_fedora_system
+
     - name: Ensure XDG runtime dir exists for rootless Podman user
       become: true
       ansible.builtin.file:
@@ -318,6 +323,7 @@
         owner: "{{ run_as_user }}"
         group: "{{ run_as_user }}"
         mode: '0700'
+      when: not is_fedora_system
 
     - name: Ensure /usr/bin/newuidmap is setuid root
       become: true
