@@ -36,6 +36,7 @@ jspm_packages/
 .env.development.local
 .env.test.local
 .env.production.local
+env.yml
 
 # Python
 __pycache__/
@@ -97,8 +98,11 @@ Thumbs.db
 *.bak
 *.backup
 *.old
+.artifacts/
 
 # Secrets
 *.key
 *.pem
 *.secret
+anible.cfg
+.ansible

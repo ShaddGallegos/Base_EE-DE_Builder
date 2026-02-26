@@ -36,33 +36,60 @@
       changed_when: "'Nothing to do' not in (community_general_install.stdout | default(''))"
       when: community_general_check.rc != 0
 
-    - name: Check if system is RHEL
-      ansible.builtin.command: grep -q "Red Hat Enterprise Linux" /etc/os-release
-      register: is_rhel
-      failed_when: false
-      changed_when: false
+    - name: Gather minimal facts
+      ansible.builtin.setup:
+        gather_subset:
+          - '!all'
+          - distribution
+          - hardware
+
+    - name: Set OS support facts
+      ansible.builtin.set_fact:
+        distro_name: "{{ ansible_facts['distribution'] | default('') }}"
+        distro_major_version: "{{ ansible_facts['distribution_major_version'] | default((ansible_facts['distribution_version'] | string).split('.')[0]) }}"
+        distro_version: "{{ ansible_facts['distribution_version'] | default('') }}"
+        rhel_arch: "{{ ansible_facts['architecture'] | default('x86_64') }}"
+        is_rhel_system: "{{ (ansible_facts['distribution'] | default('')) == 'RedHat' }}"
+        is_fedora_system: "{{ (ansible_facts['distribution'] | default('')) == 'Fedora' }}"
+
+    - name: Validate supported host OS versions
+      ansible.builtin.fail:
+        msg: >-
+          Unsupported host OS: {{ distro_name }} {{ distro_version }}.
+          Supported hosts are RHEL 9/10 and Fedora 42/43.
+      when: >-
+        not (
+          (is_rhel_system and (distro_major_version | int in [9, 10]))
+          or
+          (is_fedora_system and (distro_major_version | int in [42, 43]))
+        )
 
     - name: Check if subscription-manager is installed
       ansible.builtin.stat:
         path: /usr/sbin/subscription-manager
       register: subscription_manager_stat
+      when: is_rhel_system
 
     - name: Check Red Hat registration status
       ansible.builtin.command: timeout 10 subscription-manager identity
+      become: true
       args:
         chdir: /
       register: rhsm_identity
       failed_when: false
       changed_when: false
-      when: subscription_manager_stat.stat.exists
+      when:
+        - is_rhel_system
+        - subscription_manager_stat.stat.exists
 
     - name: Check subscription-manager functionality
       ansible.builtin.command: timeout 10 subscription-manager version
+      become: true
       register: subscription_manager_check
       failed_when: false
       changed_when: false
       when:
-        - is_rhel.rc == 0
+        - is_rhel_system
         - subscription_manager_stat.stat.exists
         - rhsm_identity.rc != 0
 
@@ -72,8 +99,8 @@
         state: present
       become: true
       when:
-        - is_rhel.rc == 0
-        - subscription_manager_check.rc != 0
+        - is_rhel_system
+        - not (subscription_manager_stat.stat.exists | default(false))
 
     - name: Register the system with Red Hat Subscription Manager
       ansible.builtin.shell: >
@@ -85,8 +112,8 @@
       changed_when: "'The system has been registered' in (subscription_result.stdout | default(''))"
       no_log: true
       when:
-        - is_rhel.rc == 0
-        - subscription_manager_check.rc == 0
+        - is_rhel_system
+        - subscription_manager_stat.stat.exists
         - rhsm_identity.rc != 0
         - redhat_username | length > 0
         - redhat_password | length > 0
@@ -94,7 +121,7 @@
     - name: Show subscription status
       ansible.builtin.debug:
         msg: |
-          System is {{ 'RHEL' if is_rhel.rc|default(1) == 0 else 'not RHEL' }}
+          System is {{ distro_name }} {{ distro_version }}
           {% if subscription_result is defined and subscription_result.rc is defined %}
           {{ 'Registered with Red Hat subscription manager.' if subscription_result.rc == 0 else
              'Registration failed. Using podman auth for registry access.' }}
@@ -102,28 +129,16 @@
           Registration skipped. Using podman auth for registry access.
           {% endif %}
 
-    - name: Gather minimal facts
-      ansible.builtin.setup:
-        gather_subset:
-          - '!all'
-          - distribution
-          - hardware
-
-    - name: Set OS facts
-      ansible.builtin.set_fact:
-        is_rhel_system: "{{ ansible_facts['distribution'] == 'RedHat' }}"
-        using_subscription: false
-
     - name: Set RHEL repository naming facts
       ansible.builtin.set_fact:
-        rhel_major_version: "{{ ansible_facts['distribution_major_version'] | default((ansible_facts['distribution_version'] | string).split('.')[0]) }}"
-        rhel_arch: "{{ ansible_facts['architecture'] | default('x86_64') }}"
+        rhel_major_version: "{{ distro_major_version }}"
+        aap_repo_version_effective: "{{ '2.6' if (distro_major_version | int) >= 10 else aap_repo_version }}"
       when: is_rhel_system
 
     - name: Build required Red Hat repository IDs (RHEL only)
       ansible.builtin.set_fact:
         repos_to_enable:
-          - "ansible-automation-platform-{{ aap_repo_version }}-for-rhel-{{ rhel_major_version }}-{{ rhel_arch }}-rpms"
+          - "ansible-automation-platform-{{ aap_repo_version_effective }}-for-rhel-{{ rhel_major_version }}-{{ rhel_arch }}-rpms"
           - "rhel-{{ rhel_major_version }}-for-{{ rhel_arch }}-baseos-rpms"
           - "rhel-{{ rhel_major_version }}-for-{{ rhel_arch }}-appstream-rpms"
           - "codeready-builder-for-rhel-{{ rhel_major_version }}-{{ rhel_arch }}-rpms"
@@ -133,9 +148,9 @@
     - name: Notify repository handling
       ansible.builtin.debug:
         msg: |
-          Running on {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}
+          Running on {{ distro_name }} {{ distro_version }}
           Will {% if not is_rhel_system %}NOT{% endif %} use subscription-manager for repositories
-          {% if not is_rhel_system %}Using alternative repository approach{% endif %}
+          {% if is_fedora_system %}Using Fedora native repositories{% endif %}
 
     - name: Get currently enabled Red Hat repositories (RHEL only)
       ansible.builtin.command:
@@ -206,36 +221,32 @@
       changed_when: rhsm_result.rc == 0
       failed_when: false
 
-    - name: Set up alternative repositories (non-RHEL)
-      when: not is_rhel_system
-      block:
-        - name: Enable EPEL repository
-          ansible.builtin.dnf:
-            name: epel-release
-            state: present
-          become: true
+    - name: Build host package list
+      ansible.builtin.set_fact:
+        host_required_packages:
+          - ansible-core
+          - python3
+          - python3-pip
+          - git
+          - podman
+          - rpm-build
+          - gcc
+          - make
+          - libffi-devel
+          - openssl-devel
+          - python3-devel
+          - jq
+          - redhat-rpm-config
 
-        - name: Set up Ansible repository
-          ansible.builtin.dnf:
-            name: https://releases.ansible.com/ansible-tower/rpm/el9/ansible-tower-repo-latest-9.el9.noarch.rpm
-            state: present
-            disable_gpg_check: true
-          become: true
-          failed_when: false
+    - name: Add SELinux Python package for RHEL
+      ansible.builtin.set_fact:
+        host_required_packages: "{{ host_required_packages + ['libselinux-python3'] }}"
+      when: is_rhel_system
 
-        - name: Install common dependencies
-          ansible.builtin.dnf:
-            name:
-              - podman
-              - buildah
-              - skopeo
-              - git
-              - python3-pip
-              - python3-devel
-              - make
-              - gcc
-            state: present
-          become: true
+    - name: Add SELinux Python package for Fedora
+      ansible.builtin.set_fact:
+        host_required_packages: "{{ host_required_packages + ['python3-libselinux'] }}"
+      when: is_fedora_system
 
     - name: Find all RHEL environment directories
       ansible.builtin.find:
@@ -323,21 +334,7 @@
     - name: Ensure required packages are installed
       become: true
       ansible.builtin.dnf:
-        name:
-          - ansible-core
-          - python3
-          - python3-pip
-          - git
-          - podman
-          - rpm-build
-          - gcc
-          - make
-          - libffi-devel
-          - openssl-devel
-          - python3-devel
-          - jq
-          - libselinux-python3
-          - redhat-rpm-config
+        name: "{{ host_required_packages }}"
         state: latest
         update_cache: true
 
@@ -603,6 +600,7 @@
         if (lookup('env', 'SUDO_USER') | default('', true) | length > 0)
         else lookup('env', 'HOME')
       }}
+    ee_selection: "{{ ee_selection | default('', true) }}"
     enforce_rootless_build: false
 
   tasks:
@@ -637,24 +635,35 @@
       ansible.builtin.debug:
         msg: "{{ menu_options_lines }}"
 
+    - name: Set environment selection from extra vars when provided
+      ansible.builtin.set_fact:
+        user_selection_input: "{{ ee_selection | string | trim }}"
+      when: ee_selection | string | trim | length > 0
+
     - name: Prompt user for environment selection
       ansible.builtin.pause:
         prompt: "Enter comma-separated numbers (e.g. 1,3,4) or '{{ rhel_dirs | length + 1 }}' for all:"
       register: user_selection
+      when: user_selection_input is not defined
+
+    - name: Set environment selection from prompt input
+      ansible.builtin.set_fact:
+        user_selection_input: "{{ user_selection.user_input | default('') | trim }}"
+      when: user_selection_input is not defined
 
     - name: Set environment_list to all
       ansible.builtin.set_fact:
         environment_list: "{{ rhel_dirs | map(attribute='path') | map('basename') | list }}"
-      when: user_selection.user_input | trim | lower == 'all' or user_selection.user_input | trim == (rhel_dirs | length + 1) | string
+      when: user_selection_input | lower == 'all' or user_selection_input == (rhel_dirs | length + 1) | string
 
     - name: Set environment_list to selected items
       ansible.builtin.set_fact:
         environment_list: >-
           {{ rhel_dirs | map(attribute='path') | map('basename') | list
              | zip(range(1, rhel_dirs|length + 1))
-             | selectattr('1', 'in', user_selection.user_input.replace(' ', '').split(',') | map('int') | list)
+             | selectattr('1', 'in', user_selection_input.replace(' ', '').split(',') | select('match', '^\\d+$') | map('int') | list)
              | map('first') | list }}
-      when: user_selection.user_input | trim | lower != 'all' and user_selection.user_input | trim != (rhel_dirs | length + 1) | string
+      when: user_selection_input | lower != 'all' and user_selection_input != (rhel_dirs | length + 1) | string
 
     - name: Ensure environment_list is initialized
       ansible.builtin.set_fact:
@@ -663,7 +672,7 @@
     - name: Fail when no valid environments are selected
       ansible.builtin.fail:
         msg: >-
-          No valid execution environments were selected. Input was '{{ user_selection.user_input | default('') }}'.
+          No valid execution environments were selected. Input was '{{ user_selection_input | default('') }}'.
           Choose 'all', '{{ rhel_dirs | length + 1 }}', or one/more numbers between 1 and {{ rhel_dirs | length }}.
       when: environment_list | length == 0
 
