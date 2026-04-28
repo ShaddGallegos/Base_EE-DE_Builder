@@ -39,14 +39,16 @@
     - name: Gather minimal facts
       ansible.builtin.setup:
         gather_subset:
-          - '!all'
+          - "!all"
           - distribution
           - hardware
 
     - name: Set OS support facts
       ansible.builtin.set_fact:
         distro_name: "{{ ansible_facts['distribution'] | default('') }}"
-        distro_major_version: "{{ ansible_facts['distribution_major_version'] | default((ansible_facts['distribution_version'] | string).split('.')[0]) }}"
+        distro_major_version: "{{ ansible_facts['distribution_major_version'] |
+          default((ansible_facts['distribution_version'] |
+          string).split('.')[0]) }}"
         distro_version: "{{ ansible_facts['distribution_version'] | default('') }}"
         rhel_arch: "{{ ansible_facts['architecture'] | default('x86_64') }}"
         is_rhel_system: "{{ (ansible_facts['distribution'] | default('')) == 'RedHat' }}"
@@ -55,8 +57,8 @@
     - name: Validate supported host OS versions
       ansible.builtin.fail:
         msg: >-
-          Unsupported host OS: {{ distro_name }} {{ distro_version }}.
-          Supported hosts are RHEL 9/10 and Fedora 42/43.
+          Unsupported host OS: {{ distro_name }} {{ distro_version }}. Supported
+          hosts are RHEL 9/10 and Fedora 42/43.
       when: >-
         not (
           (is_rhel_system and (distro_major_version | int in [9, 10]))
@@ -109,7 +111,8 @@
       become: true
       register: subscription_result
       failed_when: false
-      changed_when: "'The system has been registered' in (subscription_result.stdout | default(''))"
+      changed_when: "'The system has been registered' in (subscription_result.stdout |
+        default(''))"
       no_log: true
       when:
         - is_rhel_system
@@ -132,17 +135,21 @@
     - name: Set RHEL repository naming facts
       ansible.builtin.set_fact:
         rhel_major_version: "{{ distro_major_version }}"
-        aap_repo_version_effective: "{{ '2.6' if (distro_major_version | int) >= 10 else aap_repo_version }}"
+        aap_repo_version_effective: "{{ '2.6' if (distro_major_version | int) >= 10 else
+          aap_repo_version }}"
       when: is_rhel_system
 
     - name: Build required Red Hat repository IDs (RHEL only)
       ansible.builtin.set_fact:
         repos_to_enable:
-          - "ansible-automation-platform-{{ aap_repo_version_effective }}-for-rhel-{{ rhel_major_version }}-{{ rhel_arch }}-rpms"
+          - "ansible-automation-platform-{{ aap_repo_version_effective
+            }}-for-rhel-{{ rhel_major_version }}-{{ rhel_arch }}-rpms"
           - "rhel-{{ rhel_major_version }}-for-{{ rhel_arch }}-baseos-rpms"
           - "rhel-{{ rhel_major_version }}-for-{{ rhel_arch }}-appstream-rpms"
-          - "codeready-builder-for-rhel-{{ rhel_major_version }}-{{ rhel_arch }}-rpms"
-          - "rhel-{{ rhel_major_version }}-for-{{ rhel_arch }}-supplementary-rpms"
+          - "codeready-builder-for-rhel-{{ rhel_major_version }}-{{ rhel_arch
+            }}-rpms"
+          - "rhel-{{ rhel_major_version }}-for-{{ rhel_arch
+            }}-supplementary-rpms"
       when: is_rhel_system
 
     - name: Notify repository handling
@@ -201,10 +208,12 @@
     - name: Show unavailable repositories skipped on this host
       ansible.builtin.debug:
         msg: >-
-          Skipping unavailable repositories: {{ (repos_to_enable | default([])) | difference(repos_to_enable_filtered | default([])) | join(', ') }}
+          Skipping unavailable repositories: {{ (repos_to_enable | default([]))
+          | difference(repos_to_enable_filtered | default([])) | join(', ') }}
       when:
         - is_rhel_system
-        - ((repos_to_enable | default([])) | difference(repos_to_enable_filtered | default([])) | length) > 0
+        - ((repos_to_enable | default([])) | difference(repos_to_enable_filtered
+          | default([])) | length) > 0
 
     - name: Enable required Red Hat repositories (RHEL only)
       ansible.builtin.command:
@@ -264,7 +273,7 @@
         state: present
         owner: root
         group: root
-        mode: '0644'
+        mode: "0644"
 
     - name: Ensure user has subgid mapping for rootless Podman
       become: true
@@ -275,7 +284,7 @@
         state: present
         owner: root
         group: root
-        mode: '0644'
+        mode: "0644"
 
     - name: Get UID for rootless Podman user
       ansible.builtin.command: "id -u {{ run_as_user }}"
@@ -312,7 +321,8 @@
 
     - name: Skip XDG runtime dir management on Fedora
       ansible.builtin.debug:
-        msg: "Skipping /run/user/{{ run_as_uid.stdout }} management on Fedora; using system-managed runtime directory."
+        msg: "Skipping /run/user/{{ run_as_uid.stdout }} management on Fedora; using
+          system-managed runtime directory."
       when: is_fedora_system
 
     - name: Ensure XDG runtime dir exists for rootless Podman user
@@ -322,20 +332,20 @@
         state: directory
         owner: "{{ run_as_user }}"
         group: "{{ run_as_user }}"
-        mode: '0700'
+        mode: "0700"
       when: not is_fedora_system
 
     - name: Ensure /usr/bin/newuidmap is setuid root
       become: true
       ansible.builtin.file:
         path: /usr/bin/newuidmap
-        mode: '4755'
+        mode: "4755"
 
     - name: Ensure /usr/bin/newgidmap is setuid root
       become: true
       ansible.builtin.file:
         path: /usr/bin/newgidmap
-        mode: '4755'
+        mode: "4755"
 
     - name: Ensure required packages are installed
       become: true
@@ -376,26 +386,34 @@
 
     - name: Ensure ansible-builder is available for rootful fallback
       become: true
-      ansible.builtin.pip:
-        name:
-          - ansible-builder
-        state: present
-        executable: pip3
-        break_system_packages: true
-
+      block:
+        - name: Install ansible-builder with break-system-packages when supported
+          ansible.builtin.pip:
+            name:
+              - ansible-builder
+            state: present
+            executable: pip3
+            extra_args: --break-system-packages
+      rescue:
+        - name: Install ansible-builder without break-system-packages fallback
+          ansible.builtin.pip:
+            name:
+              - ansible-builder
+            state: present
+            executable: pip3
 
     - name: Ensure ~/.ansible/conf directory exists
       ansible.builtin.file:
         path: "{{ env_conf_dir }}"
         state: directory
-        mode: '0700'
+        mode: "0700"
 
     - name: Ensure env.yml file exists
       ansible.builtin.copy:
         dest: "{{ env_conf_path }}"
         content: ""
         force: false
-        mode: '0600'
+        mode: "0600"
 
     - name: Read env.yml
       ansible.builtin.slurp:
@@ -408,9 +426,13 @@
 
     - name: Detect existing credential lines in env.yml
       ansible.builtin.set_fact:
-        has_rh_credentials_token_line: "{{ (env_conf_lines | select('match', '^\\s*(export\\s+)?RH_CREDENTIALS_TOKEN\\s*=') | list | length) > 0 }}"
-        has_redhat_cdn_username_line: "{{ (env_conf_lines | select('match', '^\\s*(export\\s+)?REDHAT_CDN_USERNAME\\s*=') | list | length) > 0 }}"
-        has_redhat_cdn_password_line: "{{ (env_conf_lines | select('match', '^\\s*(export\\s+)?REDHAT_CDN_PASSWORD\\s*=') | list | length) > 0 }}"
+        has_rh_credentials_token_line: "{{ (env_conf_lines | select('match',
+          '^\\s*(export\\s+)?RH_CREDENTIALS_TOKEN\\s*=') | list | length) > 0
+          }}"
+        has_redhat_cdn_username_line: "{{ (env_conf_lines | select('match',
+          '^\\s*(export\\s+)?REDHAT_CDN_USERNAME\\s*=') | list | length) > 0 }}"
+        has_redhat_cdn_password_line: "{{ (env_conf_lines | select('match',
+          '^\\s*(export\\s+)?REDHAT_CDN_PASSWORD\\s*=') | list | length) > 0 }}"
 
     - name: Set facts for existing secrets
       ansible.builtin.set_fact:
@@ -450,13 +472,15 @@
         prompt: "Enter your Red Hat CDN username:"
       register: cdn_username_prompt
       when:
-        - (not (has_redhat_cdn_username_line | bool)) or redhat_cdn_username | default('') | trim | length == 0
+        - (not (has_redhat_cdn_username_line | bool)) or redhat_cdn_username |
+          default('') | trim | length == 0
 
     - name: Set fact for Red Hat CDN username from prompt
       ansible.builtin.set_fact:
         redhat_cdn_username: "{{ cdn_username_prompt.user_input }}"
       when:
-        - (not (has_redhat_cdn_username_line | bool)) or redhat_cdn_username | default('') | trim | length == 0
+        - (not (has_redhat_cdn_username_line | bool)) or redhat_cdn_username |
+          default('') | trim | length == 0
 
     - name: Prompt for Red Hat CDN password if not set
       ansible.builtin.pause:
@@ -464,13 +488,15 @@
         echo: false
       register: cdn_password_prompt
       when:
-        - (not (has_redhat_cdn_password_line | bool)) or redhat_cdn_password | default('') | trim | length == 0
+        - (not (has_redhat_cdn_password_line | bool)) or redhat_cdn_password |
+          default('') | trim | length == 0
 
     - name: Set fact for Red Hat CDN password from prompt
       ansible.builtin.set_fact:
         redhat_cdn_password: "{{ cdn_password_prompt.user_input }}"
       when:
-        - (not (has_redhat_cdn_password_line | bool)) or redhat_cdn_password | default('') | trim | length == 0
+        - (not (has_redhat_cdn_password_line | bool)) or redhat_cdn_password |
+          default('') | trim | length == 0
 
     - name: Prompt for RH_CREDENTIALS_TOKEN if not set
       ansible.builtin.pause:
@@ -478,22 +504,26 @@
         echo: false
       register: rh_token_prompt
       when:
-        - (not (has_rh_credentials_token_line | bool)) or rh_credentials_token | default('') | trim | length == 0
+        - (not (has_rh_credentials_token_line | bool)) or rh_credentials_token |
+          default('') | trim | length == 0
 
     - name: Set fact for RH_CREDENTIALS_TOKEN from prompt
       ansible.builtin.set_fact:
         rh_credentials_token: "{{ rh_token_prompt.user_input }}"
       when:
-        - (not (has_rh_credentials_token_line | bool)) or rh_credentials_token | default('') | trim | length == 0
+        - (not (has_rh_credentials_token_line | bool)) or rh_credentials_token |
+          default('') | trim | length == 0
 
     - name: Fail if required registry credentials are empty
       ansible.builtin.fail:
         msg: >-
-          REDHAT_CDN_USERNAME and REDHAT_CDN_PASSWORD must be non-empty in {{ env_conf_path }}
-          before Podman login can run.
+          REDHAT_CDN_USERNAME and REDHAT_CDN_PASSWORD must be non-empty in {{
+          env_conf_path }} before Podman login can run.
       when:
-        - ((not (has_redhat_cdn_username_line | bool)) and (redhat_cdn_username | default('') | trim | length == 0))
-          or ((not (has_redhat_cdn_password_line | bool)) and (redhat_cdn_password | default('') | trim | length == 0))
+        - ((not (has_redhat_cdn_username_line | bool)) and (redhat_cdn_username
+          | default('') | trim | length == 0)) or ((not
+          (has_redhat_cdn_password_line | bool)) and (redhat_cdn_password |
+          default('') | trim | length == 0))
 
     - name: Validate rootless Podman availability for run user
       ansible.builtin.command: podman info --format '{{ "{{.Host.Security.Rootless}}" }}'
@@ -506,21 +536,22 @@
 
     - name: Set Podman mode based on rootless validation
       ansible.builtin.set_fact:
-        podman_mode: "{{ 'rootless' if (rootless_check.rc == 0 and (rootless_check.stdout | default('') | trim) == 'true') else 'rootful' }}"
+        podman_mode: "{{ 'rootless' if (rootless_check.rc == 0 and
+          (rootless_check.stdout | default('') | trim) == 'true') else 'rootful'
+          }}"
 
     - name: Notify selected Podman mode
       ansible.builtin.debug:
         msg: >-
-          Using {{ podman_mode }} Podman mode.
-          {% if podman_mode != 'rootless' %}
-          Rootless user namespaces are not available on this host/session.
-          {% endif %}
+          Using {{ podman_mode }} Podman mode. {% if podman_mode != 'rootless'
+          %} Rootless user namespaces are not available on this host/session. {%
+          endif %}
 
     - name: Require rootless Podman mode for user-owned builds
       ansible.builtin.fail:
         msg: >-
-          Rootless Podman is required because ansible-builder must run as user {{ run_as_user }}.
-          Current mode is {{ podman_mode }}.
+          Rootless Podman is required because ansible-builder must run as user
+          {{ run_as_user }}. Current mode is {{ podman_mode }}.
       when:
         - enforce_rootless_build | bool
         - podman_mode != 'rootless'
@@ -532,14 +563,14 @@
           RH_CREDENTIALS_TOKEN={{ rh_credentials_token }}
           REDHAT_CDN_USERNAME={{ redhat_cdn_username }}
           REDHAT_CDN_PASSWORD={{ redhat_cdn_password }}
-        mode: '0600'
+        mode: "0600"
       when:
-        - not (has_rh_credentials_token_line | bool)
-          or not (has_redhat_cdn_username_line | bool)
-          or not (has_redhat_cdn_password_line | bool)
-          or rh_credentials_token | default('') | trim | length == 0
-          or redhat_cdn_username | default('') | trim | length == 0
-          or redhat_cdn_password | default('') | trim | length == 0
+        - not (has_rh_credentials_token_line | bool) or not
+          (has_redhat_cdn_username_line | bool) or not
+          (has_redhat_cdn_password_line | bool) or rh_credentials_token |
+          default('') | trim | length == 0 or redhat_cdn_username | default('')
+          | trim | length == 0 or redhat_cdn_password | default('') | trim |
+          length == 0
 
     - name: Podman login with fallback (rootless)
       when: podman_mode == 'rootless'
@@ -620,7 +651,8 @@
 
     - name: Filter only directories with 'rhel' in the name
       ansible.builtin.set_fact:
-        rhel_dirs: "{{ found_rhel_dirs.files | selectattr('path', 'search', 'rhel') | list | sort(attribute='path') }}"
+        rhel_dirs: "{{ found_rhel_dirs.files | selectattr('path', 'search', 'rhel') |
+          list | sort(attribute='path') }}"
 
     - name: Build menu options
       vars:
@@ -647,7 +679,8 @@
 
     - name: Prompt user for environment selection
       ansible.builtin.pause:
-        prompt: "Enter comma-separated numbers (e.g. 1,3,4) or '{{ rhel_dirs | length + 1 }}' for all:"
+        prompt: "Enter comma-separated numbers (e.g. 1,3,4) or '{{ rhel_dirs | length +
+          1 }}' for all:"
       register: user_selection
       when: user_selection_input is not defined
 
@@ -659,16 +692,21 @@
     - name: Set environment_list to all
       ansible.builtin.set_fact:
         environment_list: "{{ rhel_dirs | map(attribute='path') | map('basename') | list }}"
-      when: user_selection_input | lower == 'all' or user_selection_input == (rhel_dirs | length + 1) | string
+      when: user_selection_input | lower == 'all' or user_selection_input ==
+        (rhel_dirs | length + 1) | string
 
     - name: Set environment_list to selected items
       ansible.builtin.set_fact:
         environment_list: >-
-          {{ rhel_dirs | map(attribute='path') | map('basename') | list
-             | zip(range(1, rhel_dirs|length + 1))
-             | selectattr('1', 'in', user_selection_input.replace(' ', '').split(',') | select('match', '^\\d+$') | map('int') | list)
-             | map('first') | list }}
-      when: user_selection_input | lower != 'all' and user_selection_input != (rhel_dirs | length + 1) | string
+          {%- set envs = rhel_dirs | map(attribute='path') | map('basename') |
+          list -%} {%- set out = [] -%} {%- for raw in
+          user_selection_input.replace(' ', '').split(',') -%} {%- if raw is
+          match('^\\d+$') -%} {%- set idx = raw | int -%} {%- if idx >= 1 and
+          idx <= (envs | length) and (envs[idx - 1] not in out) -%} {%- set _ =
+          out.append(envs[idx - 1]) -%} {%- endif -%} {%- endif -%} {%- endfor
+          -%} {{ out }}
+      when: user_selection_input | lower != 'all' and user_selection_input !=
+        (rhel_dirs | length + 1) | string
 
     - name: Ensure environment_list is initialized
       ansible.builtin.set_fact:
@@ -677,8 +715,10 @@
     - name: Fail when no valid environments are selected
       ansible.builtin.fail:
         msg: >-
-          No valid execution environments were selected. Input was '{{ user_selection_input | default('') }}'.
-          Choose 'all', '{{ rhel_dirs | length + 1 }}', or one/more numbers between 1 and {{ rhel_dirs | length }}.
+          No valid execution environments were selected. Input was '{{
+          user_selection_input | default('') }}'. Choose 'all', '{{ rhel_dirs |
+          length + 1 }}', or one/more numbers between 1 and {{ rhel_dirs |
+          length }}.
       when: environment_list | length == 0
 
     - name: Debug selected environment list
@@ -695,7 +735,8 @@
 
     - name: Fail if execution-environment.yml is missing
       ansible.builtin.fail:
-        msg: "Missing execution-environment.yml in {{ environments_dir }}/{{ item.item }}"
+        msg: "Missing execution-environment.yml in {{ environments_dir }}/{{ item.item
+          }}"
       loop: "{{ ee_yml_check.results }}"
       when: not item.stat.exists
       loop_control:
@@ -710,13 +751,14 @@
       register: cleanup_tmp_build_context
       failed_when:
         - cleanup_tmp_build_context is failed
-        - "'No such file or directory' not in (cleanup_tmp_build_context.msg | default(''))"
+        - "'No such file or directory' not in (cleanup_tmp_build_context.msg |
+          default(''))"
 
     - name: Ensure build workspace directory exists
       ansible.builtin.file:
         path: "{{ build_workspace_dir }}"
         state: directory
-        mode: '0755'
+        mode: "0755"
 
     - name: Prepare /tmp build context for each environment
       ansible.builtin.shell: |
@@ -729,14 +771,33 @@
       ansible.builtin.template:
         src: templates/ansible.cfg.j2
         dest: "{{ build_workspace_dir }}/{{ item }}/ansible.cfg"
-        mode: '0644'
+        mode: "0644"
       loop: "{{ environment_list }}"
+
+    - name: Align bindep Python devel package for RHEL 9 systemd-python builds
+      ansible.builtin.shell: |
+        set -e
+        req_file="{{ build_workspace_dir }}/{{ item }}/requirements.txt"
+        bindep_file="{{ build_workspace_dir }}/{{ item }}/bindep.txt"
+
+        if [[ -f "$req_file" && -f "$bindep_file" ]] \
+          && grep -Eq '^\s*systemd-python(\s|$)' "$req_file" \
+          && grep -Eq '^\s*python3\.11-devel\s*$' "$bindep_file"; then
+          sed -i 's/^\s*python3\.11-devel\s*$/python3.12-devel/' "$bindep_file"
+          echo "updated"
+        fi
+      args:
+        executable: /bin/bash
+      loop: "{{ environment_list }}"
+      register: bindep_python_align
+      changed_when: "'updated' in (bindep_python_align.stdout | default(''))"
+      when: item is match('^rhel-9-')
 
     - name: Ensure ansible-builder log file exists and is writable
       ansible.builtin.file:
         path: "{{ ab_log }}"
         state: touch
-        mode: '0644'
+        mode: "0644"
 
     - name: Build execution environment with ansible-builder (rootless)
       ansible.builtin.shell: |
@@ -744,6 +805,7 @@
         echo "=== Building {{ item }} at $(date) ===" | tee -a {{ ab_log }}
         {{ ansible_playbook_python }} -m ansible_builder build \
           --container-runtime podman \
+          --extra-build-cli-args "--jobs=1 --layers=false" \
           --file execution-environment.yml \
           --tag {{ item }}:{{ build_tag }} \
           --prune \
@@ -762,8 +824,156 @@
       loop: "{{ environment_list }}"
       register: build_results
       changed_when: true
-      failed_when: build_results.rc != 0
+      failed_when: false
       when: podman_mode == 'rootless'
+
+    - name: Track rootless build failures
+      ansible.builtin.set_fact:
+        rootless_failed_items: "{{ build_results.results | selectattr('rc', 'ne', 0) |
+          map(attribute='item') | list }}"
+      when: podman_mode == 'rootless'
+
+    - name: Fail if rootless build is enforced and any build failed
+      ansible.builtin.fail:
+        msg: >-
+          Rootless build is enforced but failed for: {{ rootless_failed_items |
+          join(', ') }}. See {{ ab_log }} for details.
+      when:
+        - podman_mode == 'rootless'
+        - enforce_rootless_build | bool
+        - rootless_failed_items | length > 0
+
+    - name: Switch to rootful fallback for failed rootless builds
+      ansible.builtin.set_fact:
+        podman_mode: rootful
+      when:
+        - podman_mode == 'rootless'
+        - not (enforce_rootless_build | bool)
+        - rootless_failed_items | length > 0
+
+    - name: Report rootless failures before rootful fallback
+      ansible.builtin.debug:
+        msg: >-
+          Rootless build failed for: {{ rootless_failed_items | join(', ') }}.
+          Retrying those environments with rootful Podman.
+      when:
+        - podman_mode == 'rootful'
+        - rootless_failed_items is defined
+        - rootless_failed_items | length > 0
+
+    - name: Read env.yml for rootful fallback credentials
+      ansible.builtin.slurp:
+        src: "{{ env_conf_path }}"
+      register: build_env_conf_slurp
+      when:
+        - podman_mode == 'rootful'
+        - not (enforce_rootless_build | bool)
+
+    - name: Parse rootful fallback credentials from env.yml
+      ansible.builtin.set_fact:
+        build_redhat_cdn_username: >-
+          {{
+            (
+            (lookup('env', 'REDHAT_CDN_USERNAME') | default('', true))
+            if ((lookup('env', 'REDHAT_CDN_USERNAME') | default('', true) | trim | length) > 0)
+            else
+            (build_env_conf_slurp.content | b64decode)
+            | regex_findall('(?m)^\\s*(?:export\\s+)?REDHAT_CDN_USERNAME\\s*=\\s*(.+)\\s*$')
+            | first
+            | default('', true)
+            )
+            | string
+            | trim
+          }}
+        build_redhat_cdn_password: >-
+          {{
+            (
+            (lookup('env', 'REDHAT_CDN_PASSWORD') | default('', true))
+            if ((lookup('env', 'REDHAT_CDN_PASSWORD') | default('', true) | trim | length) > 0)
+            else
+            (build_env_conf_slurp.content | b64decode)
+            | regex_findall('(?m)^\\s*(?:export\\s+)?REDHAT_CDN_PASSWORD\\s*=\\s*(.+)\\s*$')
+            | first
+            | default('', true)
+            )
+            | string
+            | trim
+          }}
+      when:
+        - podman_mode == 'rootful'
+        - not (enforce_rootless_build | bool)
+
+    - name: Prompt for rootful fallback username when missing
+      ansible.builtin.pause:
+        prompt: "Enter your Red Hat CDN username for rootful fallback:"
+      register: build_cdn_username_prompt
+      when:
+        - podman_mode == 'rootful'
+        - not (enforce_rootless_build | bool)
+        - build_redhat_cdn_username | default('') | trim | length == 0
+
+    - name: Set rootful fallback username from prompt
+      ansible.builtin.set_fact:
+        build_redhat_cdn_username: "{{ build_cdn_username_prompt.user_input | default('') | trim }}"
+      when:
+        - podman_mode == 'rootful'
+        - not (enforce_rootless_build | bool)
+        - build_redhat_cdn_username | default('') | trim | length == 0
+
+    - name: Prompt for rootful fallback password when missing
+      ansible.builtin.pause:
+        prompt: "Enter your Red Hat CDN password for rootful fallback:"
+        echo: false
+      register: build_cdn_password_prompt
+      when:
+        - podman_mode == 'rootful'
+        - not (enforce_rootless_build | bool)
+        - build_redhat_cdn_password | default('') | trim | length == 0
+
+    - name: Set rootful fallback password from prompt
+      ansible.builtin.set_fact:
+        build_redhat_cdn_password: "{{ build_cdn_password_prompt.user_input | default('') | trim }}"
+      when:
+        - podman_mode == 'rootful'
+        - not (enforce_rootless_build | bool)
+        - build_redhat_cdn_password | default('') | trim | length == 0
+
+    - name: Fail when rootful fallback credentials are missing
+      ansible.builtin.fail:
+        msg: >-
+          Rootful fallback requires REDHAT_CDN_USERNAME and REDHAT_CDN_PASSWORD
+          in {{ env_conf_path }}. Please set both values and rerun.
+      when:
+        - podman_mode == 'rootful'
+        - not (enforce_rootless_build | bool)
+        - build_redhat_cdn_username | default('') | length == 0 or
+          build_redhat_cdn_password | default('') | length == 0
+
+    - name: Podman login with fallback for rootful build play
+      when:
+        - podman_mode == 'rootful'
+        - not (enforce_rootless_build | bool)
+        - build_redhat_cdn_username | length > 0
+        - build_redhat_cdn_password | length > 0
+      block:
+        - name: Podman login to registry.redhat.io (build play rootful)
+          become: true
+          ansible.builtin.shell: |
+            podman login registry.redhat.io -u "{{ build_redhat_cdn_username }}" -p "{{ build_redhat_cdn_password }}"
+          register: build_play_podman_login
+          changed_when: "'Login Succeeded' in (build_play_podman_login.stdout | default(''))"
+          failed_when: build_play_podman_login.rc != 0
+          no_log: true
+      rescue:
+        - name: Podman login to registry.access.redhat.com (build play rootful fallback)
+          become: true
+          ansible.builtin.shell: |
+            podman login registry.access.redhat.com -u "{{ build_redhat_cdn_username }}" -p "{{ build_redhat_cdn_password }}"
+          register: build_play_podman_login_fallback
+          changed_when: "'Login Succeeded' in (build_play_podman_login_fallback.stdout |
+            default(''))"
+          failed_when: build_play_podman_login_fallback.rc != 0
+          no_log: true
 
     - name: Build execution environment with ansible-builder (rootful fallback)
       become: true
@@ -772,6 +982,7 @@
         echo "=== Building {{ item }} at $(date) ===" | tee -a {{ ab_log }}
         {{ ansible_playbook_python }} -m ansible_builder build \
           --container-runtime podman \
+          --extra-build-cli-args "--jobs=1 --layers=false" \
           --file execution-environment.yml \
           --tag {{ item }}:{{ build_tag }} \
           --prune \
@@ -785,7 +996,9 @@
         executable: /bin/bash
       environment:
         PATH: "{{ lookup('env', 'PATH') }}"
-      loop: "{{ environment_list }}"
+      loop: "{{ (rootless_failed_items | default([])) if (rootless_failed_items is
+        defined and rootless_failed_items | length > 0) else environment_list
+        }}"
       register: build_results
       changed_when: true
       failed_when: build_results.rc != 0
@@ -797,6 +1010,7 @@
       ansible.builtin.debug:
         msg: |
           Build Summary:
-          {% for idx in range(environment_list | length) %}
-            - {{ environment_list[idx] }}: {% if build_results.results[idx].rc == 0 %}SUCCESS{% else %}FAILED{% endif %} (see {{ ab_log }})
+          {% set summary_results = build_results.results | default([build_results]) %}
+          {% for result in summary_results %}
+            - {{ result.item | default('n/a') }}: {% if result.rc is defined %}{% if result.rc == 0 %}SUCCESS{% else %}FAILED{% endif %}{% elif result.skipped | default(false) %}SKIPPED{% else %}UNKNOWN{% endif %} (see {{ ab_log }})
           {% endfor %}
